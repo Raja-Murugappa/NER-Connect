@@ -96,6 +96,9 @@ def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> d
     if p_landslide > 0.5 or p_flood > 0.5:
         base_speed *= 0.45
     eta_mins = max(2, int(round((dist / max(5.0, base_speed)) * 60)))
+    hours = eta_mins // 60
+    mins = eta_mins % 60
+    eta_str = f"{hours}h {mins}m" if hours > 0 else f"{mins} min"
 
     # 6. Risk Labels & Indicators
     if p_landslide >= 0.50:
@@ -150,9 +153,9 @@ def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> d
     return {
         "segment_id": segment["segment_id"],
         "road_name": segment["road_name"],
-        "segment_type": segment.get("segment_type", "🛣️ HIGHWAY CORRIDOR"),
+        "segment_type": segment.get("segment_type", "🛣️ STRATEGIC HIGHWAY SECTOR"),
         "distance": f"{segment['distance_km']} km",
-        "eta": f"{eta_mins} min",
+        "eta": eta_str,
         "elevation": f"{elev_start} m ➔ {elev_end} m (Slope: {slope}%)",
         "weather": w_label,
         "landslide_risk": ls_label,
@@ -161,23 +164,32 @@ def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> d
         "road_condition": road_cond,
         "confidence": f"{confidence}%",
         "status": status_msg,
-        "operational_action": segment.get("operational_action", "Maintain standard monitoring.")
+        "operational_action": segment.get("operational_action", "Standard transit monitoring."),
+        "embedded_milestones": segment.get("embedded_milestones", [])
     }
 
 def print_segment_card(card: dict):
-    print("=" * 65)
+    print("=" * 68)
     print(f"{card['segment_id']} | {card['segment_type']}")
-    print(f"Location:         {card['road_name']}")
-    print("=" * 65)
+    print(f"Sector:           {card['road_name']}")
+    print("=" * 68)
     print(f"Distance & ETA:   {card['distance']}  |  Est. Travel Time: {card['eta']}")
     print(f"Elevation Profile:{card['elevation']}")
     print(f"Weather:          {card['weather']}")
     print(f"Landslide Risk:   {card['landslide_risk']}")
     print(f"Flood Risk:       {card['flood_risk']}")
     print(f"Connectivity:     {card['network']}")
-    print(f"Corridor Health:  {card['road_condition']} (Confidence: {card['confidence']})\n")
-    print(f"Status & Advisory:")
-    print(f"  {card['status']}\n")
-    print(f"🚨 Actionable Operational Directive:")
+    print(f"Sector Health:    {card['road_condition']} (Confidence: {card['confidence']})")
+
+    # Render Embedded Milestones (POIs) if any
+    milestones = card.get("embedded_milestones", [])
+    if milestones:
+        print("\n📍 Strategic Milestones & Control Points Inside Sector:")
+        for m in milestones:
+            print(f"   • [{m['km_marker']}] {m['type']}: {m['name']}")
+
+    print(f"\nStatus & Advisory:")
+    print(f"  {card['status']}")
+    print(f"\n🚨 Operational Command Directive:")
     print(f"  👉 {card['operational_action']}")
-    print("=" * 65 + "\n")
+    print("=" * 68 + "\n")

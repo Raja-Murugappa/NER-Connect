@@ -6,15 +6,28 @@ from ner_connect.intelligence.open_data_service import (
     calculate_slope
 )
 
+MIN_SEGMENT_THRESHOLD_KM = 50.0  # Strict minimum segment length in km
+
+def compute_target_sector_count(total_dist: float) -> int:
+    """
+    Mathematical formula to determine optimal sector budget:
+    Target: ~75-85 km per sector.
+    Clamped between 2 and 7 sectors.
+    """
+    if total_dist <= 65.0:
+        return 1
+    if total_dist <= 120.0:
+        return 2
+    return max(2, min(7, int(round(total_dist / 80.0))))
+
 def create_smart_dynamic_segments(polyline: list, total_dist: float, road_name: str,
                                   state: str, district: str, junctions: list, bridges: list) -> list:
     """
-    Dynamically slices a real-world route polyline into smart feature-aware operational segments.
-    Breaks at:
-    - Control Checkpoints & State/District transit gates
-    - Highway Interchanges & Reroute Junctions
-    - Critical Bridges & River Crossings
-    - High-Slope Mountain Passes (Steep terrain > 18%)
+    Optimized Segmenter using:
+    1. Mathematical Sector Budget Formula
+    2. Strict Minimum Distance Threshold (>= 50 km)
+    3. Priority-Based Landmark Snapping (P1: Checkposts > P2: Major Junctions > P3: Bridges)
+    4. Internal Embedded Milestones (POIs) that don't fragment the route.
     """
     # 1. Compute cumulative distances along polyline
     cum_dists = [0.0]
@@ -22,13 +35,12 @@ def create_smart_dynamic_segments(polyline: list, total_dist: float, road_name: 
         d = haversine_distance(polyline[i-1][0], polyline[i-1][1], polyline[i][0], polyline[i][1])
         cum_dists.append(cum_dists[-1] + d)
 
-    # 2. Find Checkposts along the route
+    # 2. Collect all Landmarks with Priority Scores
+    # Priority: 1 = Critical Checkposts, 2 = Major Highway Junctions, 3 = Critical Bridges
+    all_landmarks = []
+
+    # Checkposts (Priority 1)
     checkposts = find_checkposts_along_route(polyline, max_dist_km=5.0)
-
-    # 3. Collect and map all Anchor Points to cumulative distance (km)
-    anchors = []
-
-    # Map Checkposts
     for cp in checkposts:
         cp_lat, cp_lon = cp["coords"]
         best_km = 0.0
@@ -38,111 +50,120 @@ def create_smart_dynamic_segments(polyline: list, total_dist: float, road_name: 
             if d < min_d:
                 min_d = d
                 best_km = cum_dists[i]
-        anchors.append({
-            "km": round(best_km, 1),
+        all_landmarks.append({
+            "priority": 1,
             "type": "🛡️ CONTROL CHECKPOINT",
             "name": cp["name"],
-            "action": f"Deploy officers at {cp['name']} for vehicle inspection, driver alerts, and physical notices."
+            "km": round(best_km, 1),
+            "action": f"Deploy officers at {cp['name']} for driver notice and vehicle inspection."
         })
 
-    # Map Major Junctions (pick up to 4 significant junctions spaced out)
-    last_junc_km = -50.0
+    # Major Junctions (Priority 2)
+    last_junc_km = -30.0
     for j in junctions:
         j_lat, j_lon = j["coords"]
         for i in range(0, len(polyline), 5):
             d = haversine_distance(j_lat, j_lon, polyline[i][0], polyline[i][1])
             if d < 1.0:
                 km = cum_dists[i]
-                if abs(km - last_junc_km) > 35.0 and 10.0 < km < (total_dist - 15.0):
-                    anchors.append({
-                        "km": round(km, 1),
+                if abs(km - last_junc_km) > 25.0 and 10.0 < km < (total_dist - 10.0):
+                    all_landmarks.append({
+                        "priority": 2,
                         "type": "🔀 REROUTE JUNCTION",
                         "name": j["name"],
-                        "action": f"Primary diversion point. If segment ahead is blocked, divert traffic at {j['name']}."
+                        "km": round(km, 1),
+                        "action": f"Primary diversion point. If road ahead is blocked, divert traffic at {j['name']}."
                     })
                     last_junc_km = km
                 break
 
-    # Map Bridges
+    # Bridges (Priority 3)
     for b in bridges:
         b_lat, b_lon = b["coords"]
         for i in range(0, len(polyline), 5):
             d = haversine_distance(b_lat, b_lon, polyline[i][0], polyline[i][1])
             if d < 1.0:
                 km = cum_dists[i]
-                anchors.append({
-                    "km": round(km, 1),
+                all_landmarks.append({
+                    "priority": 3,
                     "type": "🌉 CRITICAL BRIDGE",
                     "name": b["name"],
-                    "action": f"Single-point-of-failure bridge crossing ({b['name']}). Monitor water level and structural integrity."
+                    "km": round(km, 1),
+                    "action": f"Monitor river water level and bridge structure ({b['name']})."
                 })
                 break
 
-    # Sort anchors by distance along route
-    anchors.sort(key=lambda x: x["km"])
+    # Sort all landmarks by distance along route
+    all_landmarks.sort(key=lambda x: x["km"])
 
-    # 4. Build Smart Cut Points (merge anchors that are too close, add intermediate cuts if stretch > 60 km)
-    cut_points = [0.0]
+    # 3. Mathematical Nominal Cut Points
+    K = compute_target_sector_count(total_dist)
+    nominal_cuts = [round(j * (total_dist / K), 1) for j in range(1, K)]
+
+    # 4. Priority-Based Snapping with Strict Minimum Threshold (>= 50 km)
+    cuts = [0.0]
     cut_meta = [{}]
+    used_landmark_indices = set()
 
-    for a in anchors:
-        if a["km"] - cut_points[-1] >= 15.0 and (total_dist - a["km"]) >= 10.0:
-            cut_points.append(a["km"])
-            cut_meta.append(a)
+    for target in nominal_cuts:
+        prev_cut = cuts[-1]
+        
+        # Snapping window around target nominal mark
+        window_start = max(prev_cut + MIN_SEGMENT_THRESHOLD_KM, target - 25.0)
+        window_end = min(total_dist - 35.0, target + 25.0)
 
-    # If gaps between cuts are too large (> 65 km), insert standard highway splits
-    final_cuts = [cut_points[0]]
-    final_meta = [cut_meta[0]]
+        best_cand = None
+        best_cand_idx = -1
+        best_priority = 99
+        min_dist_to_target = 9999.0
 
-    for i in range(1, len(cut_points)):
-        prev = final_cuts[-1]
-        curr = cut_points[i]
-        gap = curr - prev
-        if gap > 65.0:
-            num_splits = int(gap // 50.0)
-            step = gap / (num_splits + 1)
-            for s in range(1, num_splits + 1):
-                mid_km = round(prev + s * step, 1)
-                final_cuts.append(mid_km)
-                final_meta.append({
-                    "type": "🛣️ HIGHWAY CORRIDOR",
-                    "name": f"{road_name} Transit Sector",
-                    "action": "Standard highway monitoring. Maintain safe following distance."
+        for idx, lm in enumerate(all_landmarks):
+            if idx in used_landmark_indices:
+                continue
+            lm_km = lm["km"]
+            # Check strict minimum distance constraints
+            if window_start <= lm_km <= window_end and (lm_km - prev_cut) >= MIN_SEGMENT_THRESHOLD_KM:
+                # Rank by priority first, then proximity to nominal target
+                if (lm["priority"] < best_priority) or (lm["priority"] == best_priority and abs(lm_km - target) < min_dist_to_target):
+                    best_cand = lm
+                    best_cand_idx = idx
+                    best_priority = lm["priority"]
+                    min_dist_to_target = abs(lm_km - target)
+
+        if best_cand is not None:
+            cuts.append(best_cand["km"])
+            cut_meta.append(best_cand)
+            used_landmark_indices.add(best_cand_idx)
+        else:
+            # Fall back to nominal target, enforcing >= 50 km
+            fallback_cut = max(prev_cut + MIN_SEGMENT_THRESHOLD_KM, target)
+            if (total_dist - fallback_cut) >= 35.0:
+                cuts.append(round(fallback_cut, 1))
+                cut_meta.append({
+                    "type": "🛣️ STRATEGIC HIGHWAY SECTOR",
+                    "name": f"{road_name} Sector {len(cuts)}",
+                    "action": "Standard strategic corridor monitoring."
                 })
-        final_cuts.append(curr)
-        final_meta.append(cut_meta[i])
 
-    # Handle remainder to destination
-    if total_dist - final_cuts[-1] > 65.0:
-        gap = total_dist - final_cuts[-1]
-        mid_km = round(final_cuts[-1] + gap / 2.0, 1)
-        final_cuts.append(mid_km)
-        final_meta.append({
-            "type": "🛣️ HIGHWAY CORRIDOR",
-            "name": f"{road_name} Mountain Approach",
-            "action": "Standard transit stretch approaching final corridor."
-        })
+    # Add final destination cut
+    cuts.append(round(total_dist, 1))
 
-    final_cuts.append(round(total_dist, 1))
-
-    # 5. Extract GPS coordinates & Elevation for each segment
-    segments = []
-    
-    # Sample coordinates for elevation profile query
+    # 5. Extract GPS & Elevation for each sector
     sample_pts = []
-    for i in range(len(final_cuts) - 1):
-        s_km = final_cuts[i]
-        e_km = final_cuts[i+1]
-        # find closest polyline pt
+    for i in range(len(cuts) - 1):
+        s_km = cuts[i]
+        e_km = cuts[i+1]
         s_idx = min(range(len(cum_dists)), key=lambda k: abs(cum_dists[k] - s_km))
         e_idx = min(range(len(cum_dists)), key=lambda k: abs(cum_dists[k] - e_km))
         sample_pts.extend([polyline[s_idx], polyline[e_idx]])
 
     elevations = get_elevation_profile(sample_pts)
 
-    for i in range(len(final_cuts) - 1):
-        s_km = final_cuts[i]
-        e_km = final_cuts[i+1]
+    # 6. Build the Sectors with Embedded Milestones
+    sectors = []
+    for i in range(len(cuts) - 1):
+        s_km = cuts[i]
+        e_km = cuts[i+1]
         seg_dist = round(e_km - s_km, 1)
 
         s_idx = min(range(len(cum_dists)), key=lambda k: abs(cum_dists[k] - s_km))
@@ -150,24 +171,35 @@ def create_smart_dynamic_segments(polyline: list, total_dist: float, road_name: 
         s_coords = polyline[s_idx]
         e_coords = polyline[e_idx]
 
-        elev_s = elevations[i * 2] if (i * 2) < len(elevations) else 200.0
-        elev_e = elevations[i * 2 + 1] if (i * 2 + 1) < len(elevations) else 200.0
+        elev_s = elevations[i * 2] if (i * 2) < len(elevations) else 150.0
+        elev_e = elevations[i * 2 + 1] if (i * 2 + 1) < len(elevations) else 150.0
         slope_pct = calculate_slope(elev_s, elev_e, seg_dist)
 
-        meta = final_meta[i+1] if (i+1) < len(final_meta) and final_meta[i+1] else {}
-        seg_type = meta.get("type", "🛣️ HIGHWAY CORRIDOR")
-        seg_label = meta.get("name", f"{road_name} Sector {i+1}")
-        action = meta.get("action", "Standard corridor patrol and monitoring.")
+        # Collect embedded milestones that fall INSIDE this sector
+        embedded = []
+        for lm in all_landmarks:
+            if s_km < lm["km"] < e_km:
+                embedded.append({
+                    "km_marker": f"km {lm['km']:.1f}",
+                    "type": lm["type"],
+                    "name": lm["name"],
+                    "action": lm["action"]
+                })
 
-        # If elevation increases drastically (> 18% slope), upgrade to High Slope Pass
-        if slope_pct >= 18.0 and seg_type == "🛣️ HIGHWAY CORRIDOR":
-            seg_type = "⛰️ HIGH SLOPE PASS"
-            seg_label = f"{road_name} Mountain Ascent ({int(elev_s)}m ➔ {int(elev_e)}m)"
-            action = f"Steep mountain grade ({slope_pct}% slope). Restrict overloaded trucks and alert for rockfalls."
+        meta = cut_meta[i+1] if (i+1) < len(cut_meta) and cut_meta[i+1] else {}
+        seg_type = meta.get("type", "🛣️ STRATEGIC HIGHWAY SECTOR")
+        seg_name = meta.get("name", f"{road_name} Sector {i+1}")
+        action = meta.get("action", "Standard transit monitoring and patrol.")
 
-        segments.append({
-            "segment_id": f"SEGMENT {i+1:02d}",
-            "road_name": seg_label,
+        # Classify high mountain ascent
+        if slope_pct >= 15.0 or (elev_e - elev_s) >= 500.0:
+            seg_type = "⛰️ HIGH MOUNTAIN ASCENT"
+            seg_name = f"{road_name} Mountain Pass ({int(elev_s)}m ➔ {int(elev_e)}m)"
+            action = f"Mountain pass with rapid elevation rise ({int(elev_s)}m to {int(elev_e)}m). Alert for slope instability and heavy truck strain."
+
+        sectors.append({
+            "segment_id": f"SECTOR {i+1:02d}",
+            "road_name": seg_name,
             "segment_type": seg_type,
             "state": state,
             "district": district,
@@ -177,16 +209,16 @@ def create_smart_dynamic_segments(polyline: list, total_dist: float, road_name: 
             "elevation_start_m": int(elev_s),
             "elevation_end_m": int(elev_e),
             "slope_percent": slope_pct,
-            "operational_action": action
+            "operational_action": action,
+            "embedded_milestones": embedded
         })
 
-    return segments
+    return sectors
 
 def generate_road_segments(road_name: str, state: str, district: str,
                             start_coords: tuple, end_coords: tuple) -> tuple:
     """
-    Main entry point for Smart Feature-Aware Road Segmentation.
-    Queries OSRM for live driving geometry and automatically cuts at junctions, checkposts, and bridges.
+    Main entry point for Mathematical & Priority-Based Road Segmentation.
     """
     route_info = get_osrm_route(start_coords, end_coords)
     total_dist = route_info["distance_km"]
@@ -194,7 +226,7 @@ def generate_road_segments(road_name: str, state: str, district: str,
     junctions = route_info.get("junctions", [])
     bridges = route_info.get("bridges", [])
 
-    segments = create_smart_dynamic_segments(
+    sectors = create_smart_dynamic_segments(
         polyline=polyline,
         total_dist=total_dist,
         road_name=road_name,
@@ -204,4 +236,7 @@ def generate_road_segments(road_name: str, state: str, district: str,
         bridges=bridges
     )
 
-    return total_dist, segments, route_info
+    return total_dist, sectors, route_info
+
+create_smart_dynamic_sectors = create_smart_dynamic_segments
+slice_polyline_into_segments = create_smart_dynamic_segments
