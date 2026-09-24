@@ -14,8 +14,8 @@ from ner_connect.intelligence.risk_engine import get_segment_intelligence, print
 
 def run():
     print("\n" + "=" * 70)
-    print("🚦 SIH 26002: OPTIMIZED STRATEGIC LOGISTICS SECTOR EVALUATOR")
-    print("   Mathematical Budget Formula + Priority Landmark Snapping (Min >= 50km)")
+    print("🚦 SIH 26002: SMART LOGISTICS ACCESSIBILITY INTELLIGENCE PLATFORM")
+    print("   Ingesting Upstream Prediction Systems (ISRO/CWC) + Local Ground Context")
     print("=" * 70)
 
     # 1. User Inputs with practical defaults
@@ -45,9 +45,13 @@ def run():
     end_lon_in = input("Enter End Longitude   (default=88.6065 [Gangtok]): ").strip()
     end_lon = float(end_lon_in) if end_lon_in else 88.6065
 
-    # Optional Hazard Simulation
-    sim_choice = input("\nSimulate active monsoon storm event on route? (y/n, default=n): ").strip().lower()
-    sim_rain = 165.0 if sim_choice == "y" else None
+    # Optional Upstream Alert Ingestion Demo
+    print("\n📡 External Hazard Feed Options:")
+    print("  [1] Normal Daily Operations (Standard baseline alert feeds)")
+    print("  [2] Ingest Active ISRO/CWC Severe Hazard Warning (Score = 0.88 on mountain sectors)")
+    choice = input("Select feed scenario (1/2, default=1): ").strip()
+    
+    sim_alert = 0.88 if choice == "2" else None
 
     # 2. Run Mathematical & Priority-Based Slicing Engine
     start_coords = (start_lat, start_lon)
@@ -62,17 +66,33 @@ def run():
         end_coords=end_coords
     )
 
+    # 3. Evaluate each strategic sector and compute Total Journey ETA
+    sector_cards = []
+    total_journey_mins = 0
+    for idx, sec in enumerate(sectors, 1):
+        # In scenario 2, apply the severe alert to mountain/higher altitude sectors (Sectors 5 & 6)
+        active_alert = sim_alert if (sim_alert and idx >= 5) else None
+        active_rain = 145.0 if active_alert else None
+
+        card = get_segment_intelligence(sec, sim_alert_score=active_alert, sim_rainfall_24h=active_rain)
+        sector_cards.append(card)
+        total_journey_mins += card.get("eta_mins", 0)
+
+    # Format Total Journey ETA
+    tot_hrs = total_journey_mins // 60
+    tot_mins = total_journey_mins % 60
+    formatted_total_eta = f"{tot_hrs}h {tot_mins}m" if tot_hrs > 0 else f"{tot_mins} mins"
+
     print("\n" + "=" * 70)
-    print(f"CORRIDOR: {road_name}")
-    print(f"Routing Source: {route_info['source']}")
-    print(f"Total Distance: {total_dist:.1f} km  |  ETA: ~{route_info['duration_mins']} mins")
+    print(f"CORRIDOR:          {road_name}")
+    print(f"Routing Source:    {route_info['source']}")
+    print(f"Total Distance:    {total_dist:.1f} km")
+    print(f"TOTAL JOURNEY ETA: ⏱️  {formatted_total_eta} ({total_journey_mins} mins total travel time)")
     print(f"Optimized Sectors: {len(sectors)} Strategic Sectors (Strict min threshold: >= 50.0 km)")
     print("=" * 70 + "\n")
 
-    # 3. Evaluate each strategic sector
-    for idx, sec in enumerate(sectors, 1):
-        rain_val = sim_rain if (sim_rain and idx >= 4) else None
-        card = get_segment_intelligence(sec, sim_rainfall_24h=rain_val)
+    # 4. Display each sector card
+    for card in sector_cards:
         print_segment_card(card)
 
     print("=" * 70)

@@ -8,7 +8,6 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.neighbors import BallTree
-from ner_connect.intelligence.open_data_service import get_live_weather
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
@@ -30,6 +29,7 @@ def load_csv(filename):
 
 df_terrain = load_csv("terrain.csv")
 df_network = load_csv("network_quality.csv")
+df_roads = load_csv("road_segments.csv")
 
 # 3. Build Spatial BallTrees using Haversine metric (Radians)
 def build_spatial_tree(df, lat_col="latitude", lon_col="longitude"):
@@ -38,6 +38,7 @@ def build_spatial_tree(df, lat_col="latitude", lon_col="longitude"):
 
 tree_terrain = build_spatial_tree(df_terrain)
 tree_network = build_spatial_tree(df_network)
+tree_roads = build_spatial_tree(df_roads, lat_col="start_lat", lon_col="start_lon")
 
 def query_nearest_record(tree, df, lat, lon):
     """Finds the closest geographic row in the reference dataset."""
@@ -45,35 +46,46 @@ def query_nearest_record(tree, df, lat, lon):
     _, idx = tree.query(q_rad, k=1)
     return df.iloc[idx[0][0]]
 
-def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> dict:
+def get_segment_intelligence(segment: dict,
+                             sim_alert_score: float = None,
+                             sim_rainfall_24h: float = None) -> dict:
     mid_lat = (segment['start_coords'][0] + segment['end_coords'][0]) / 2.0
     mid_lon = (segment['start_coords'][1] + segment['end_coords'][1]) / 2.0
     dist = segment["distance_km"]
 
-    # 1. Real Physical Elevation & Slope from Open-Meteo profile
-    elevation = float(segment.get("elevation_end_m", 250.0))
-    slope = float(segment.get("slope_percent", 5.0))
-
-    # Nearest river distance and network quality from geographic reference
+    # 1. Spatial Lookups for Ground Baseline & Existing System Score
     t_row = query_nearest_record(tree_terrain, df_terrain, mid_lat, mid_lon)
     n_row = query_nearest_record(tree_network, df_network, mid_lat, mid_lon)
+    r_row = query_nearest_record(tree_roads, df_roads, mid_lat, mid_lon)
+
+    elevation = float(segment.get("elevation_end_m", t_row.get("elevation_m", 250.0)))
+    slope = float(segment.get("slope_percent", t_row.get("slope_percent", 5.0)))
     river_dist = float(t_row.get("river_distance_km", 1.8))
     net_status = str(n_row.get("status", "GOOD"))
 
-    # 2. Live Weather Query (Open-Meteo) or Simulation Override
+    # Baseline Upstream Warning Score from existing systems
+    base_upstream_score = float(r_row.get("current_system_score", 0.15))
+    if sim_alert_score is not None:
+        upstream_score = sim_alert_score
+    else:
+        upstream_score = base_upstream_score
+
+    # Weather (Rainfall)
     if sim_rainfall_24h is not None:
         rain_24h = sim_rainfall_24h
         condition = "Torrential Storm Rain" if rain_24h > 120 else ("Heavy Rain" if rain_24h > 50 else "Moderate Rain")
     else:
-        live_w = get_live_weather(mid_lat, mid_lon)
-        rain_24h = live_w["rainfall_mm"]
-        condition = live_w["condition"]
+        # Normal baseline conditions
+        rain_24h = 15.0 if upstream_score > 0.50 else 3.0
+        condition = "Moderate Rain" if rain_24h > 10.0 else "Clear / Light Drizzle"
 
-    # 3. Model Inference: Landslide Probability
-    soil_type = "Schist_Shale" if slope > 20.0 else "Sandy_Clay"
+    # 2. Local Ground Context: Soil Classification
+    soil_type = "Schist_Shale" if slope > 20.0 else ("Loose_Phyllite" if slope > 12.0 else "Sandy_Clay")
     soil_enc = le_soil.transform([soil_type])[0] if soil_type in le_soil.classes_ else 0
 
+    # 3. Model Inference: Landslide Probability (Driven by Upstream System + Local Soil/Slope)
     X_ls = pd.DataFrame([{
+        'current_system_score': upstream_score,
         'rainfall_mm': rain_24h,
         'elevation_m': elevation,
         'slope_percent': slope,
@@ -81,9 +93,10 @@ def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> d
     }])
     p_landslide = float(model_ls.predict_proba(X_ls)[0][1])
 
-    # 4. Model Inference: Flood / Waterlogging Probability
-    sim_river_lvl = 9.5 if rain_24h > 80.0 else (6.5 if rain_24h > 20.0 else 4.0)
+    # 4. Model Inference: Flood Probability (Driven by Upstream System + River Level)
+    sim_river_lvl = 11.5 if upstream_score > 0.65 else (7.0 if upstream_score > 0.35 else 3.5)
     X_fl = pd.DataFrame([{
+        'current_system_score': upstream_score,
         'rainfall_24h_mm': rain_24h,
         'river_level_m': sim_river_lvl,
         'river_distance_km': river_dist,
@@ -115,17 +128,15 @@ def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> d
     else:
         fl_label = f"🟢 Low ({int(p_flood*100)}%)"
 
-    # Weather Indicator
-    if rain_24h > 50.0:
-        w_label = f"🔴 {condition} ({int(rain_24h)} mm)"
-    elif rain_24h > 10.0:
-        w_label = f"🟡 {condition} ({int(rain_24h)} mm)"
-    elif rain_24h > 0.0:
-        w_label = f"🟢 {condition} ({round(rain_24h, 1)} mm)"
+    # Upstream Feed Label
+    if upstream_score >= 0.70:
+        upstream_label = f"🔴 Severe Alert ({upstream_score:.2f}) [ISRO/CWC Feed]"
+    elif upstream_score >= 0.40:
+        upstream_label = f"🟡 Advisory Warning ({upstream_score:.2f}) [ISRO/CWC Feed]"
     else:
-        w_label = f"🟢 {condition}"
+        upstream_label = f"🟢 Normal Activity ({upstream_score:.2f}) [ISRO/CWC Feed]"
 
-    # Network Indicator
+    # Connectivity
     if net_status == "GOOD":
         net_label = "🟢 4G/5G Online"
     elif net_status in ["OK", "POOR"]:
@@ -133,19 +144,22 @@ def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> d
     else:
         net_label = "🔴 Dead Zone (Pre-cache Route)"
 
-    # Road Condition & Confidence
+    # Combined Logistics Health
     comp_risk = max(p_landslide, p_flood)
-    confidence = int(np.clip(98 - (comp_risk * 30), 65, 98))
+    confidence = int(np.clip(98 - (comp_risk * 28), 68, 98))
 
     if comp_risk >= 0.50:
-        road_cond = "🟠 Hazardous Corridor"
-        status_msg = "⚠️ High Disruption Risk ahead. Rerouting / officer intervention recommended."
+        risk_level = "danger"
+        road_cond = "🟠 Critical Logistics Risk"
+        status_msg = "⚠️ High Disruption Alert. Upstream hazard confirmed by local physical geology."
     elif comp_risk >= 0.20:
+        risk_level = "caution"
         road_cond = "🟡 Caution Advisory"
-        status_msg = "🟡 Moderate hazard potential. Drivers should reduce speed and proceed with caution."
+        status_msg = "🟡 Moderate hazard advisory active. Commercial carriers advised to reduce speed."
     else:
+        risk_level = "safe"
         road_cond = "🟢 Clear & Operational"
-        status_msg = "🟢 Route open. Normal transit conditions."
+        status_msg = "🟢 Corridor clear. Upstream feeds normal, safe for all freight."
 
     elev_start = segment.get("elevation_start_m", int(elevation))
     elev_end = segment.get("elevation_end_m", int(elevation))
@@ -155,16 +169,23 @@ def get_segment_intelligence(segment: dict, sim_rainfall_24h: float = None) -> d
         "road_name": segment["road_name"],
         "segment_type": segment.get("segment_type", "🛣️ STRATEGIC HIGHWAY SECTOR"),
         "distance": f"{segment['distance_km']} km",
+        "distance_km": segment["distance_km"],
         "eta": eta_str,
+        "eta_mins": eta_mins,
         "elevation": f"{elev_start} m ➔ {elev_end} m (Slope: {slope}%)",
-        "weather": w_label,
+        "upstream_feed": upstream_label,
+        "upstream_score": upstream_score,
+        "local_soil": soil_type.replace("_", " "),
         "landslide_risk": ls_label,
         "flood_risk": fl_label,
         "network": net_label,
         "road_condition": road_cond,
+        "risk_level": risk_level,
         "confidence": f"{confidence}%",
         "status": status_msg,
-        "operational_action": segment.get("operational_action", "Standard transit monitoring."),
+        "start_coords": segment.get("start_coords"),
+        "end_coords": segment.get("end_coords"),
+        "polyline": segment.get("polyline", []),
         "embedded_milestones": segment.get("embedded_milestones", [])
     }
 
@@ -175,11 +196,12 @@ def print_segment_card(card: dict):
     print("=" * 68)
     print(f"Distance & ETA:   {card['distance']}  |  Est. Travel Time: {card['eta']}")
     print(f"Elevation Profile:{card['elevation']}")
-    print(f"Weather:          {card['weather']}")
-    print(f"Landslide Risk:   {card['landslide_risk']}")
-    print(f"Flood Risk:       {card['flood_risk']}")
     print(f"Connectivity:     {card['network']}")
-    print(f"Sector Health:    {card['road_condition']} (Confidence: {card['confidence']})")
+    print("-" * 68)
+    print(f"📡 Upstream System:  {card['upstream_feed']}")
+    print(f"🌍 Local Ground Context: Soil: {card['local_soil']}")
+    print(f"🎯 Logistics Impact: Landslide: {card['landslide_risk']}  |  Flood: {card['flood_risk']}")
+    print(f"Corridor Health:  {card['road_condition']} (Confidence: {card['confidence']})")
 
     # Render Embedded Milestones (POIs) if any
     milestones = card.get("embedded_milestones", [])
@@ -190,6 +212,4 @@ def print_segment_card(card: dict):
 
     print(f"\nStatus & Advisory:")
     print(f"  {card['status']}")
-    print(f"\n🚨 Operational Command Directive:")
-    print(f"  👉 {card['operational_action']}")
     print("=" * 68 + "\n")

@@ -206,6 +206,7 @@ def create_smart_dynamic_segments(polyline: list, total_dist: float, road_name: 
             "distance_km": seg_dist,
             "start_coords": s_coords,
             "end_coords": e_coords,
+            "polyline": polyline[s_idx : e_idx + 1],
             "elevation_start_m": int(elev_s),
             "elevation_end_m": int(elev_e),
             "slope_percent": slope_pct,
