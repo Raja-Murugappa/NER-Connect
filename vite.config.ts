@@ -119,6 +119,10 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       host: true,
       allowedHosts: true,
+      // external_repo is the separate Python backend: it writes route/geocode/elevation
+      // caches to external_repo/data on every request, and without this the dev server
+      // treats each write as a source change and force-reloads the page mid-journey.
+      watch: { ignored: ['**/external_repo/**'] },
       proxy: {
         // Route calculation & sector intelligence are served by the Python backend (external_repo/app.py)
         '/api/evaluate': apiTarget,
