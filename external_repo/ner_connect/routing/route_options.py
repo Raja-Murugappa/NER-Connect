@@ -81,12 +81,14 @@ def _candidate_routes(start_coords: tuple, end_coords: tuple, primary: np.ndarra
     return [route for r in results if r for route in r]
 
 
-def get_alternative_options(start_coords: tuple, end_coords: tuple, primary_polyline: list,
-                            road_name: str, scenario: str = "1") -> list:
+def find_distinct_routes(start_coords: tuple, end_coords: tuple, primary_polyline: list,
+                         max_count: int) -> list:
     """
-    Up to MAX_ALTERNATIVES real alternative road routes between the two places, excluding the
-    primary route and near-duplicates, shortest first. Each is scored like the primary.
-    Raises RoutingUnavailableError if OSRM cannot be reached.
+    Up to max_count real alternative road routes between two places, excluding the primary
+    route and near-duplicates (see the module docstring's filters), shortest first. Returns
+    (route, polyline_array) pairs. Shared by get_alternative_options (which scores each one
+    for display) and district route-accessibility counting (which only needs how many
+    genuinely different roads exist). Raises RoutingUnavailableError if OSRM cannot be reached.
     """
     primary = to_array(primary_polyline)
     primary_km = float(cumulative_km(primary)[-1])
@@ -102,9 +104,18 @@ def get_alternative_options(start_coords: tuple, end_coords: tuple, primary_poly
         if any(overlap_fraction(line, other) >= DUPLICATE_OVERLAP for _, other in chosen):
             continue
         chosen.append((route, line))
-        if len(chosen) == MAX_ALTERNATIVES:
+        if len(chosen) == max_count:
             break
+    return chosen
 
+
+def get_alternative_options(start_coords: tuple, end_coords: tuple, primary_polyline: list,
+                            road_name: str, scenario: str = "1") -> list:
+    """
+    Up to MAX_ALTERNATIVES real alternative road routes between the two places, each scored
+    like the primary. Raises RoutingUnavailableError if OSRM cannot be reached.
+    """
+    chosen = find_distinct_routes(start_coords, end_coords, primary_polyline, MAX_ALTERNATIVES)
     return [{
         "polyline": route["polyline"],
         "distance_km": route["distance_km"],

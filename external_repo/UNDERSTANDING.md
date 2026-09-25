@@ -2,7 +2,7 @@
 
 This guide explains **what NER-Connect does, how it works, and what every file is for**, in everyday language. You do not need to know how to code to follow it.
 
-> **Where to start:** Read sections 1–4 for the big picture. Sections 5–9 explain each part in detail. Section 10 is a file-by-file map. Section 11 is an honest list of what is real and what is still simulated.
+> **Where to start:** Read sections 1–4 for the big picture. Sections 5–11 explain each part in detail. Section 12 is a file-by-file map. Section 13 is an honest list of what is real and what is still simulated.
 
 ---
 
@@ -34,6 +34,13 @@ The whole project is organised around seven simple questions:
 | 6 | **Can I reach the driver?** | Communication Layer (SMS) | Yes (demo level) |
 | 7 | **If not, what can I pre-load?** | Offline / Pre-cache | Only a "dead zone" warning label so far |
 
+Two more pages sit alongside these seven:
+
+| # | Question | Part of the system | Built yet? |
+|---|----------|--------------------|-----------|
+| 8 | **Which districts are one landslide away from being cut off?** | District Connectivity | Yes |
+| 9 | **Which deliveries are late, rerouted or stuck right now?** | Delivery Status | Yes (mirrors the simulated journey) |
+
 ---
 
 ## 3. The Two Halves of the Project
@@ -53,9 +60,9 @@ NER-Connect has **two programs that work together**:
 └────────────────────────────────────┘          └─────────────────────────────────────┘
 ```
 
-- **The website** is the dashboard. It has three pages: **Routes**, **Field reports**, and **SMS alerts**.
+- **The website** is the dashboard. It has five pages: **Routes**, **Field reports**, **SMS alerts**, **Connectivity**, and **Deliveries**.
 - **The brain** does all the route and risk calculation. The website sends it "from Dimapur to Imphal" and gets back the routes, their sectors and their risk.
-- Only the **Routes** page needs the brain. Field reports and SMS alerts work inside the website on their own.
+- **Routes** and **Connectivity** need the brain (both ask it to find real roads). **Field reports**, **SMS alerts** and **Deliveries** work inside the website on their own, using storage in the browser.
 
 > **Rule of thumb:** All route and risk logic lives in **one place**, the Python brain. The website only displays what the brain sends back.
 
@@ -197,7 +204,7 @@ For each sector, the risk engine looks at the sector's **middle point** and gath
 | Distance to the nearest river | Nearest row in `data/terrain.csv` |
 | Mobile phone signal | Nearest row in `data/network_quality.csv` |
 | **"Upstream hazard score"** (0 to 1). Stands in for a warning from an official agency like ISRO or CWC. | Nearest row in `data/road_segments.csv` |
-| Rainfall | **Assumed**: 3 mm normally, 15 mm if the hazard score is above 0.5. See section 11. |
+| Rainfall | **Assumed**: 3 mm normally, 15 mm if the hazard score is above 0.5. See section 13. |
 | Soil type | **Guessed from slope**: steep = "Schist Shale", medium = "Loose Phyllite", gentle = "Sandy Clay" |
 
 "Nearest row" means: find the location in the spreadsheet that is geographically closest to this sector, and use its values.
@@ -321,7 +328,7 @@ Because the journey is a simulation, you can decide what kind of scenario to dem
 4. Each surviving detour becomes a full new journey (truck → bypass → back on the road → destination). It's **cut into sectors and scored for risk**, exactly like a normal route (section 5).
 5. The options (**Detour 1, 2, 3**) are sorted **safest first, then fastest**. The top one is marked **(recommended)**. Each option shows the route km where it leaves and rejoins the current road.
 
-**As soon as the road is confirmed blocked, an SMS is sent automatically** to every **verified driver** (the phone numbers approved on the Twilio trial account — see section 9) — no button needed. The message uses the recommended detour if one was found, or says where to hold if not, the same wording the map and card show. The Journey log records how many were sent and how many failed, and the alert also shows up in the SMS Alerts page's history. This only fires for a genuine blockage, never for a disruption that's behind the truck, off the route, or just a "slow down" caution.
+**As soon as the road is confirmed blocked, an SMS is sent automatically** to every **verified driver** (the phone numbers approved on the Twilio trial account — see section 11) — no button needed. The message uses the recommended detour if one was found, or says where to hold if not, the same wording the map and card show. The Journey log records how many were sent and how many failed, and the alert also shows up in the SMS Alerts page's history. This only fires for a genuine blockage, never for a disruption that's behind the truck, off the route, or just a "slow down" caution.
 
 On the map, proposed detours are drawn in **blue**. Blue is deliberately not a risk colour, so a proposal isn't mistaken for a safe or dangerous road. The selected detour is solid, the others are dashed, and a **blue diamond marks where the truck should turn off** the current road.
 
@@ -345,7 +352,52 @@ Every step is written to a **Journey log** under the map, e.g. *"14:02 Landslide
 
 ---
 
-## 8. The Field Reports Page (for field officers)
+## 8. The Connectivity Page (which districts are most at risk of being cut off)
+
+**Purpose:** answer a planning question rather than a today's-trip question: *"If one road gets blocked, which districts have no other way in or out?"*
+
+**The idea:** every district in the sample data is compared to **Guwahati**, the region's logistics hub (the same city used as the default starting point for the preset routes on the Routes page). For each district, the system asks: *how many genuinely different real roads connect it to the hub?*
+
+**How it works:**
+
+1. The page lists all **31 sample districts** straight away — this part is free, just names and map coordinates, no calculation needed.
+2. Click **Check routes** on a district (or **Check all districts** to go one by one). This does the **same real road search** the Routes page uses to find Route B and C: it asks the routing service for the direct road, then tries to find other real roads that are meaningfully different from it (not just the same road with a slightly different exit).
+3. The district is labelled:
+
+| Roads found | Label | Meaning |
+|---|---|---|
+| 1 | **Single road access** (red) | Lose that one road and the district is completely cut off. |
+| 2 | **One backup route** (amber) | There's a second real road, but only one — the district still has a single point of failure. |
+| 3 or more | **Multiple routes** (green) | Several genuinely different roads reach the district. |
+
+Because each check is a real search against the routing service (the same cost as finding alternative routes on the Routes page), it's done **one district at a time, on request**, not for all 31 automatically. Checking all of them takes a few minutes the first time; after that, results stay on screen for the session.
+
+**What this is not:** it isn't a live feed of which roads are currently open. It's a structural question — *"how many roads exist at all"* — answered with real map data, updated whenever you re-check.
+
+---
+
+## 9. The Deliveries Page (a log of every simulated trip)
+
+**Purpose:** a simple table of every journey that has been run in the **journey simulation** on the Routes page (section 7), so a control room can see at a glance which "deliveries" are moving, late, rerouted, stuck, or finished — the "delayed deliveries" view the project asks for.
+
+**How it works:** there's no separate form to fill in here. A delivery record is created automatically the moment someone clicks **Start journey** on the Routes page, and it's updated automatically as that journey plays out:
+
+| What happens on the Routes page | Status shown here |
+|---|---|
+| Journey starts | **In transit** |
+| A disruption forces a reroute search that finds a detour | **Delayed** (while the operator decides) |
+| Operator picks a detour | **Rerouted** |
+| Road is blocked and there's no way around | **Blocked** |
+| The simulated truck reaches the destination | **Delivered** |
+| Operator ends the journey early | **Ended early** |
+
+Each row shows when the trip started, the corridor, which route (A/B/C) it took, distance, how long it's been running, its status and a short note (e.g. *"Took detour 1: 82 km to go."*). You can filter by status and clear the history.
+
+> **Simulation, not a live fleet feed:** just like the journey simulation itself, this reflects the demo truck, not real vehicle GPS. Records are saved in the browser's local storage, the same way the SMS history is, so they exist on one device only.
+
+---
+
+## 10. The Field Reports Page (for field officers)
 
 **Purpose:** let road inspectors and officials send **photo proof with a location** of road conditions, like a landslide, a damaged bridge or a delivery.
 
@@ -368,7 +420,7 @@ Every step is written to a **Journey log** under the map, e.g. *"14:02 Landslide
 
 ---
 
-## 9. The SMS Alerts Page (for control rooms)
+## 11. The SMS Alerts Page (for control rooms)
 
 **Purpose:** get warnings to drivers by SMS. SMS can still get through where mobile data is weak.
 
@@ -416,18 +468,19 @@ The **driver language** is saved with each alert, but message templates exist **
 
 ---
 
-## 10. File-by-File Map
+## 12. File-by-File Map
 
 ### The Brain — `external_repo/`
 
 | File | In plain words |
 |---|---|
-| [app.py](app.py) | **The front door of the brain.** Starts the web server on port 5000. `/api/evaluate` takes origin/destination, runs steps ②–⑥ and sends the main route back; `/api/route-options` finds and scores alternative routes; `/api/reroute` checks a reported disruption against a running journey (section 7). |
+| [app.py](app.py) | **The front door of the brain.** Starts the web server on port 5000. `/api/evaluate` takes origin/destination, runs steps ②–⑥ and sends the main route back; `/api/route-options` finds and scores alternative routes; `/api/reroute` checks a reported disruption against a running journey (section 7); `/api/districts` lists the 31 sample districts instantly; `/api/district-route-status` runs the real road search for one district (section 8). |
 | [ner_connect/routing/route_options.py](ner_connect/routing/route_options.py) | **The route comparer.** Scores any route (sectors, time, risk summary) and finds genuinely different real alternatives between two places for the Routes list. |
 | [ner_connect/routing/reroute_engine.py](ner_connect/routing/reroute_engine.py) | **The rerouting engine.** Decides whether a disruption is off the route, behind the truck, a caution or a blockage; for a blockage, searches for a local bypass (widening windows plus side points), drops detours through the disruption, scores the rest and picks a hold point if nothing works. Also handles the three simulated outcomes. |
 | [ner_connect/routing/route_engine.py](ner_connect/routing/route_engine.py) | **The navigator.** Turns place names into coordinates, gets the real road route from OSRM, finds junctions and bridges, and caches everything. Falls back to a clearly labelled straight line if OSRM is down. |
 | [ner_connect/routing/segmenter.py](ner_connect/routing/segmenter.py) | **The road cutter.** Decides how many sectors, where to cut them (checkpost > junction > bridge), attaches milestones, and labels steep mountain climbs. |
 | [ner_connect/intelligence/risk_engine.py](ner_connect/intelligence/risk_engine.py) | **The risk judge.** Loads the AI models and reference spreadsheets, gathers facts for each sector, asks the models for landslide/flood chances, and builds the sector card: colour, ETA, confidence, advice. |
+| [ner_connect/intelligence/district_status.py](ner_connect/intelligence/district_status.py) | **The district checker** behind the Connectivity page (section 8). Lists the 31 sample districts from `administrative_boundaries.csv`, and for one district at a time, reuses the Routes page's "find other real roads" logic to count how many genuinely different roads reach it from Guwahati, then labels it single-road / one-backup / multiple-routes. |
 | [ner_connect/intelligence/open_data_service.py](ner_connect/intelligence/open_data_service.py) | **The outside-data helper.** Gets real elevation from Open-Meteo, calculates slope, and holds the list of 8 known NER checkposts. Also has a live-weather function that **isn't used yet**. |
 | [ner_connect/training/train.py](ner_connect/training/train.py) | **The teacher.** Trains the landslide and flood models from the history spreadsheets and saves them to `models/`. |
 | [ner_connect/utils/geo_math.py](ner_connect/utils/geo_math.py) | **The ruler.** Distances between GPS points on the curved Earth, how much two routes overlap, the "side points" used to find other roads, and the check for dead-end detours. |
@@ -449,27 +502,30 @@ The **driver language** is saved with each alert, but message templates exist **
 | `road_disruptions.csv` | Past closures and blockages (e.g. from ISRO landslide atlas) | Not yet |
 | `field_reports.csv` | Reports from road crews and drivers | Not yet |
 | `travel_time.csv` | Typical speeds, traffic and delays | Not yet |
-| `administrative_boundaries.csv` | States, districts and villages of the NE | Not yet |
+| `administrative_boundaries.csv` | States, districts and villages of the NE | Yes: district list + centroids for the Connectivity page |
 | `route_cache.json` / `geocode_cache.json` / `elevation_cache.json` | Saved routes (including alternatives), place lookups and elevations (created automatically) | Route engine, elevation lookup |
 
 ### The Website — `src/` (in the main NER-Connect folder)
 
 | File / folder | In plain words |
 |---|---|
-| `src/App.tsx` | Lists the three pages and their web addresses (`/`, `/field-evidence`, `/sms`). |
+| `src/App.tsx` | Lists the five pages and their web addresses (`/`, `/field-evidence`, `/sms`, `/connectivity`, `/deliveries`). |
 | `src/components/Navbar.tsx` | The green top bar with the page tabs. |
 | `src/index.css` | The **design base**: one set of named colours (page, text, lines, one green accent, three risk colours, one blue for proposed routes) and a few plain styles (panel, button, input, table, risk marker). Use these instead of one-off colours. |
 | `src/pages/CorridorPage.tsx` | **Routes page.** Ties everything below together: planning, route options, map, sector table and the journey simulation. |
-| `src/pages/corridor/` | Pieces of the Routes page: the planning form (`PlanForm.tsx`), route list (`RouteOptionsList.tsx`), map (`CorridorMap.tsx`), sector table (`SectorTable.tsx`), risk wording and colours (`risk.ts`), map markers (`mapIcons.ts`), the SMS wording shared by the automatic and manual alerts (`smsAlert.ts`), and the journey parts: truck playback (`useTruckPlayback.ts`), controls (`JourneyPanel.tsx`), map overlays (`JourneyMapLayers.tsx`), the reroute card (`RerouteCard.tsx`) and the journey log (`JourneyTimeline.tsx`). |
+| `src/pages/corridor/` | Pieces of the Routes page: the planning form (`PlanForm.tsx`), route list (`RouteOptionsList.tsx`), map (`CorridorMap.tsx`), sector table (`SectorTable.tsx`), risk wording and colours (`risk.ts`), map markers (`mapIcons.ts`), the SMS wording shared by the automatic and manual alerts (`smsAlert.ts`), and the journey parts: truck playback (`useTruckPlayback.ts` — also flags `atDestination` once the simulated truck reaches the end, which is what tells the Deliveries page a trip is complete), controls (`JourneyPanel.tsx`), map overlays (`JourneyMapLayers.tsx`), the reroute card (`RerouteCard.tsx`) and the journey log (`JourneyTimeline.tsx`). |
 | `src/services/corridorApi.ts` | The **messenger** that sends corridor and reroute requests to the brain and brings back the answers. |
+| `src/pages/ConnectivityPage.tsx` | **Connectivity page** (section 8): district list, state filter, per-district "Check routes" / "Check all districts" buttons and the results table. |
+| `src/services/connectivityApi.ts` | The **messenger** for the Connectivity page: fetches the district list and asks the brain for one district's route status. |
 | `src/modules/fieldEvidence/` | **Field reports page.** Camera with location stamp (`GeoCamera.tsx`), photo upload, location check (`verificationService.ts`), in-browser database (`database/`), map and saved-reports table. |
 | `src/modules/sms/` | **SMS alerts page.** Send form, history, drivers, message templates (`types/sms.ts`) and the sending logic (`services/smsStore.ts`). |
-| `vite.config.ts` | Website settings. Also runs the Twilio SMS relay and forwards corridor requests to the brain. |
+| `src/modules/deliveries/` | **Deliveries page** (section 9): the status vocabulary (`types/delivery.ts`), the browser-storage log (`services/deliveryStore.ts`), and the page itself (`DeliveriesPage.tsx`) that lists every simulated journey and its current status. Fed automatically by `CorridorPage.tsx`, not filled in by hand. |
+| `vite.config.ts` | Website settings. Also runs the Twilio SMS relay and forwards corridor, reroute and district requests to the brain (for both the dev server and the `npm run preview` build). |
 | `.env` / `.env.example` | Private settings such as the Twilio account keys. `.env` stays on your computer and is never uploaded to GitHub; `.env.example` shows which settings are needed. |
 
 ---
 
-## 11. What Is Real vs. What Is Simulated
+## 13. What Is Real vs. What Is Simulated
 
 The project's golden rule is: ***"The system should not pretend to know what it cannot observe."*** So here is an honest breakdown:
 
@@ -493,16 +549,18 @@ The project's golden rule is: ***"The system should not pretend to know what it 
 | Alternative routes | **Real**: OpenStreetMap roads via OSRM, from the truck's position |
 | SMS via Twilio | **Real SMS** (trial account; verified numbers only) |
 | Multilingual alerts | Drivers can be tagged with 8 languages, but **message templates exist in English only** so far |
+| District road counts (Connectivity page) | **Real**: OpenStreetMap roads via OSRM, same search as Routes B/C. District list and centroids are **sample data** (`administrative_boundaries.csv`), not an official boundary dataset. |
+| Delivery status (Deliveries page) | **Simulated**: it mirrors the journey simulation's status changes, not a real fleet-tracking feed |
 
 ---
 
-## 12. Known Gaps and Issues
+## 14. Known Gaps and Issues
 
 These are worth knowing before a demo or before building further:
 
 1. **Journeys are simulated.** Rerouting works (section 7), but the truck is a demo icon rather than real vehicle GPS, and disruptions are added by hand rather than arriving from weather feeds or field reports.
-2. **Field evidence, drivers and the SMS history live only in one browser.** Nothing is synced to a central server yet.
-3. **Five data files aren't used yet**: weather, disruptions, field reports, travel time and boundaries (see the data table in section 10).
+2. **Field evidence, drivers, the SMS history and the delivery log live only in one browser.** Nothing is synced to a central server yet.
+3. **Four data files aren't used yet**: weather, disruptions, field reports and travel time (see the data table in section 12).
 4. **Rainfall is assumed, not measured.** A live-weather helper exists but isn't connected to the risk engine yet.
 5. **Alert messages exist in English only**, even though drivers can be tagged with 8 languages.
 6. **MSG91 SMS isn't built.** It needs an MSG91 account key and a government-approved (DLT) message template.
@@ -519,7 +577,7 @@ These are worth knowing before a demo or before building further:
 
 ---
 
-## 13. What Comes Next (Roadmap)
+## 15. What Comes Next (Roadmap)
 
 Following the build order in the project rulebook:
 
@@ -536,7 +594,7 @@ Following the build order in the project rulebook:
 
 ---
 
-## 14. Mini Glossary
+## 16. Mini Glossary
 
 | Term | Meaning |
 |---|---|
@@ -551,9 +609,10 @@ Following the build order in the project rulebook:
 | **Fallback** | The backup plan when a service is unavailable, e.g. a straight line instead of a road. |
 | **Dead zone** | A stretch of road with no mobile signal. |
 | **Pre-cache** | Downloading information *before* entering a dead zone. |
+| **Hub** | The reference city (Guwahati) that every district's road count, on the Connectivity page, is measured from. |
 | **EXIF** | Hidden information stored inside a photo file, sometimes including where it was taken. |
 | **API** | A "door" one program uses to ask another program for something, e.g. `/api/evaluate`. |
 
 ---
 
-*If you ever feel lost while working on the project, come back to section 5 (how a request flows) and section 10 (which file does what).*
+*If you ever feel lost while working on the project, come back to section 5 (how a request flows) and section 12 (which file does what).*
