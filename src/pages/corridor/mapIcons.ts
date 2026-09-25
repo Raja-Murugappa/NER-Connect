@@ -22,7 +22,21 @@ export const startIcon = shapeIcon('circle', 14, '#1d2327', '#ffffff');
 export const endIcon = shapeIcon('square', 14, '#1d2327', '#ffffff');
 export const junctionIcon = shapeIcon('circle', 9, '#ffffff', '#5b6570');
 export const bridgeIcon = shapeIcon('square', 9, '#ffffff', '#5b6570');
-export const truckIcon = shapeIcon('circle', 18, '#2563eb', '#ffffff');
+// A simple side-view truck silhouette (cab, trailer, wheels) instead of a plain dot, so the
+// simulated vehicle reads as a truck on the map at a glance.
+export const truckIcon = L.divIcon({
+  html: `<svg width="30" height="20" viewBox="0 0 30 20" style="overflow:visible;">
+    <rect x="1" y="4" width="18" height="9" rx="1" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+    <path d="M19 7h5.5l3 4v2h-8.5z" fill="#2563eb" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>
+    <rect x="22.5" y="8.5" width="3" height="3" fill="#eaf1fe"/>
+    <circle cx="7" cy="15.5" r="2.6" fill="#1d2327" stroke="#ffffff" stroke-width="1.2"/>
+    <circle cx="22" cy="15.5" r="2.6" fill="#1d2327" stroke="#ffffff" stroke-width="1.2"/>
+  </svg>`,
+  className: '',
+  iconSize: [30, 20],
+  iconAnchor: [15, 15],
+  popupAnchor: [0, -15],
+});
 export const disruptionIcon = shapeIcon('square', 18, '#c0392b', '#ffffff', '×');
 export const holdIcon = shapeIcon('square', 14, '#ffffff', '#c0392b');
 export const divergenceIcon = shapeIcon('diamond', 12, '#2563eb', '#ffffff');
