@@ -1,61 +1,48 @@
 @import "tailwindcss";
 
-/* ==========================================================================
-   NER-Connect: Clean 2D White & Green Light-Mode Design System
-   Strictly Flat 2D, Highly Legible, Institutional Government/Enterprise UI
-   ========================================================================== */
+/*
+ * NER-Connect design tokens. One accent colour, three risk colours, one colour for
+ * proposed routes, hue-biased neutrals. Use these (bg-panel, text-muted, border-line,
+ * text-risk-high, ...) instead of one-off hex values.
+ */
+@theme {
+  --font-sans: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Sora", "Manrope", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
 
-:root {
-  --bg-body: #f4f6f4;
-  --bg-card: #ffffff;
-  --bg-subtle: #f8faf8;
-  --border-color: #d1d5db;
-  --border-light: #e5e7eb;
-  
-  /* Brand Greens */
-  --green-darkest: #1b4332;
-  --green-primary: #2d6a4f;
-  --green-medium: #40916c;
-  --green-light: #52b788;
-  --green-surface: #e8f5e9;
-  --green-surface-subtle: #f1f8f3;
+  --color-canvas: #f2f5f3;
+  --color-panel: #ffffff;
+  --color-ink: #182420;
+  --color-muted: #5f6d66;
+  --color-line: #dbe4df;
+  --color-line-soft: #ebf0ed;
 
-  /* Typography */
-  --text-primary: #111827;
-  --text-secondary: #374151;
-  --text-muted: #6b7280;
+  --color-accent: #1f6a52;
+  --color-accent-hover: #17573f;
+  --color-accent-soft: #e5f1ec;
 
-  /* Operational Alert Colors */
-  --status-safe-bg: #e8f5e9;
-  --status-safe-border: #81c784;
-  --status-safe-text: #1b5e20;
+  --color-risk-low: #2f7d4f;
+  --color-risk-medium: #b7791f;
+  --color-risk-high: #c0392b;
+  --color-risk-low-soft: #e9f3ed;
+  --color-risk-medium-soft: #fbf3e4;
+  --color-risk-high-soft: #fbecea;
 
-  --status-caution-bg: #fff8e1;
-  --status-caution-border: #ffd54f;
-  --status-caution-text: #b78103;
-
-  --status-danger-bg: #ffebee;
-  --status-danger-border: #e57373;
-  --status-danger-text: #c62828;
-
-  /* Radii */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --color-route: #2563eb;
+  --color-route-soft: #eaf1fe;
+  --color-travelled: #8a94a0;
 }
 
-* {
-  box-sizing: border-box;
+html {
+  font-size: 14px;
 }
 
 body {
   margin: 0;
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background-color: var(--bg-body);
-  color: var(--text-primary);
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
   line-height: 1.5;
-  font-size: 15px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -65,60 +52,237 @@ body {
   flex-direction: column;
 }
 
-/* Institutional Card */
-.ner-card {
-  background-color: #ffffff;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+h1, h2, h3, .panel-title {
+  font-family: var(--font-display);
+  text-wrap: balance;
 }
 
-.ner-card-header {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-light);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+/* Standard OpenStreetMap tiles shown in grey, so coloured routes and markers stand out. */
+.map-muted .leaflet-tile-pane {
+  filter: grayscale(1) contrast(0.85) brightness(1.08);
 }
 
-.ner-heading {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--green-darkest);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+/* Routes map: colours toned down but kept, so rivers, forest and road classes stay readable. */
+.map-soft .leaflet-tile-pane {
+  filter: saturate(0.4) contrast(0.95) brightness(1.03);
 }
 
-/* Operational Badges */
-.badge-safe {
-  background-color: var(--status-safe-bg);
-  border: 1px solid var(--status-safe-border);
-  color: var(--status-safe-text);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
+/* ─── Motion ─────────────────────────────────────────────────────────────── */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
 }
 
-.badge-caution {
-  background-color: var(--status-caution-bg);
-  border: 1px solid var(--status-caution-border);
-  color: var(--status-caution-text);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
+.rise-in {
+  animation: rise-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.rise-in-1 { animation-delay: 0.04s; }
+.rise-in-2 { animation-delay: 0.09s; }
+.rise-in-3 { animation-delay: 0.14s; }
+
+.fade-in {
+  animation: fade-in 0.3s ease both;
 }
 
-.badge-danger {
-  background-color: var(--status-danger-bg);
-  border: 1px solid var(--status-danger-border);
-  color: var(--status-danger-text);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
-  text-transform: uppercase;
+.skeleton {
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--color-line-soft) 25%, var(--color-line) 50%, var(--color-line-soft) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise-in, .fade-in, .skeleton, * {
+    animation-duration: 0.001s !important;
+    animation-delay: 0s !important;
+  }
+}
+
+@layer components {
+  .panel {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(24, 36, 32, 0.04);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+
+  .panel-title {
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+  }
+
+  .label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--color-muted);
+    margin-bottom: 4px;
+  }
+
+  .input {
+    width: 100%;
+    font: inherit;
+    color: inherit;
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: 7px;
+    padding: 7px 10px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .input:hover {
+    border-color: #c3d0c9;
+  }
+  .input:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font: inherit;
+    font-weight: 600;
+    border-radius: 7px;
+    padding: 7px 14px;
+    border: 1px solid var(--color-line);
+    background: var(--color-panel);
+    color: var(--color-ink);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--color-canvas);
+    border-color: #c3d0c9;
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .btn:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+  .btn-primary {
+    background: var(--color-accent);
+    border-color: var(--color-accent);
+    color: #fff;
+    box-shadow: 0 1px 2px rgba(23, 87, 63, 0.15), 0 4px 10px -4px rgba(23, 87, 63, 0.35);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+    box-shadow: 0 2px 4px rgba(23, 87, 63, 0.18), 0 6px 14px -4px rgba(23, 87, 63, 0.4);
+  }
+  .btn-route {
+    background: var(--color-route);
+    border-color: var(--color-route);
+    color: #fff;
+  }
+  .btn-route:hover:not(:disabled) {
+    background: #1d4fc4;
+    border-color: #1d4fc4;
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+  .data-table th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--color-muted);
+    border-bottom: 1px solid var(--color-line);
+    padding: 7px 8px;
+    white-space: nowrap;
+  }
+  .data-table td {
+    border-bottom: 1px solid var(--color-line-soft);
+    padding: 8px 8px;
+    vertical-align: top;
+  }
+  .data-table tbody tr {
+    transition: background 0.12s ease;
+  }
+  .data-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    font-size: 0.92em;
+  }
+
+  /* Row/option hover: a soft left accent bar plus a background tint, not a shadow. */
+  .row-interactive {
+    position: relative;
+    transition: background 0.12s ease;
+  }
+  .row-interactive:hover {
+    background: var(--color-canvas);
+  }
+  .row-interactive::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--color-accent);
+    transform: scaleY(0);
+    transition: transform 0.15s ease;
+  }
+  .row-interactive:hover::before {
+    transform: scaleY(1);
+  }
+
+  /* Risk shown as a coloured square next to words, never colour alone */
+  .risk {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .risk::before {
+    content: "";
+    flex: none;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--risk-color);
+    transform: translateY(1px);
+  }
+  .risk-low { --risk-color: var(--color-risk-low); }
+  .risk-medium { --risk-color: var(--color-risk-medium); }
+  .risk-high { --risk-color: var(--color-risk-high); }
+
+  .notice {
+    border: 1px solid var(--color-line);
+    border-left-width: 3px;
+    border-radius: 6px;
+    padding: 8px 12px;
+    background: var(--color-panel);
+    animation: rise-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .notice-warn { border-left-color: var(--color-risk-medium); background: var(--color-risk-medium-soft); }
+  .notice-error { border-left-color: var(--color-risk-high); background: var(--color-risk-high-soft); }
+  .notice-info { border-left-color: var(--color-route); background: var(--color-route-soft); }
+  .notice-ok { border-left-color: var(--color-risk-low); background: var(--color-risk-low-soft); }
 }

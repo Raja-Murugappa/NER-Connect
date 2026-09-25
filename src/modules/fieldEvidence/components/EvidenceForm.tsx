@@ -5,29 +5,36 @@ import { extractExifGps } from '../services/photoService';
 import { verifyLocation } from '../services/verificationService';
 import { insertEvidence, initializeDatabase } from '../services/databaseService';
 import { getCurrentLocation } from '../services/locationService';
-import type { EvidenceMapHandle } from './EvidenceMap';
+import { STATUS_LABEL } from '../types/evidence';
 
 interface EvidenceFormProps {
-  mapRef: React.RefObject<EvidenceMapHandle | null>;
+  /** Called after a report is saved, with where it was recorded. */
+  onSaved: (lat: number, lon: number) => void | Promise<void>;
 }
 
-export const EvidenceForm: React.FC<EvidenceFormProps> = ({ mapRef }) => {
+const CATEGORIES = [
+  'Road condition',
+  'Landslide or blockage',
+  'Damage',
+  'Bridge or road inspection',
+  'Cargo check',
+  'Proof of delivery',
+];
+
+export const EvidenceForm: React.FC<EvidenceFormProps> = ({ onSaved }) => {
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string>('');
-  const [category, setCategory] = useState<string>('Site Inspection');
+  const [category, setCategory] = useState<string>(CATEGORIES[0]);
   const [description, setDescription] = useState<string>('');
   const [showCamera, setShowCamera] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [notification, setNotification] = useState<{ type: 'ok' | 'error'; message: string } | null>(null);
 
   const handleCapture = (file: File, preview: string) => {
     setPhotoFile(file);
     setPhotoPreview(preview);
     setShowCamera(false);
-    setNotification({
-      type: 'success',
-      message: 'Photo captured & burned with live GPS! Fill details and click Save.',
-    });
+    setNotification(null);
   };
 
   const handleClear = () => {
@@ -37,11 +44,8 @@ export const EvidenceForm: React.FC<EvidenceFormProps> = ({ mapRef }) => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!photoFile) {
-      setNotification({
-        type: 'error',
-        message: 'Please take a photo with GPS Camera or upload an image first.',
-      });
+    if (!photoFile && !description.trim()) {
+      setNotification({ type: 'error', message: 'Add a photo, a description, or both.' });
       return;
     }
 
@@ -51,33 +55,31 @@ export const EvidenceForm: React.FC<EvidenceFormProps> = ({ mapRef }) => {
     try {
       await initializeDatabase();
 
-      // Get device location with graceful fallback
-      let deviceLoc = {
-        latitude: 26.1445,
-        longitude: 91.7362,
-        accuracy: 25,
-        timestamp: Date.now(),
-      };
-
+      // Device location, with a fallback so a report can still be saved without GPS
+      let deviceLoc = { latitude: 26.1445, longitude: 91.7362, accuracy: 25, timestamp: Date.now() };
+      let usedFallback = false;
       try {
         deviceLoc = await getCurrentLocation();
       } catch (locErr: any) {
-        console.warn('Could not acquire precise GPS, using fallback:', locErr);
+        usedFallback = true;
+        console.warn('Could not get GPS position, using fallback:', locErr);
       }
 
-      // Extract EXIF data if present
+      // GPS stored inside the photo file, if there is one
       let exif: { latitude?: number; longitude?: number } = {};
-      try {
-        exif = await extractExifGps(photoFile);
-      } catch (exifErr) {
-        console.warn('EXIF extract note:', exifErr);
+      if (photoFile) {
+        try {
+          exif = await extractExifGps(photoFile);
+        } catch (exifErr) {
+          console.warn('No readable photo location:', exifErr);
+        }
       }
 
       const { status, reason } = verifyLocation(deviceLoc, exif);
 
-      const evidence = {
-        photo: photoPreview,
-        category: category.trim() || 'General Evidence',
+      await insertEvidence({
+        photo: photoPreview, // '' when no photo was attached
+        category: category.trim() || 'General',
         description: description.trim(),
         latitude: deviceLoc.latitude,
         longitude: deviceLoc.longitude,
@@ -87,133 +89,69 @@ export const EvidenceForm: React.FC<EvidenceFormProps> = ({ mapRef }) => {
         exif_latitude: exif.latitude,
         exif_longitude: exif.longitude,
         timestamp: new Date().toISOString(),
-      };
-
-      await insertEvidence(evidence as any);
-
-      if (mapRef.current) {
-        mapRef.current.flyTo(deviceLoc.latitude, deviceLoc.longitude);
-      }
-
-      setNotification({
-        type: 'success',
-        message: `Evidence saved to SQLite! Verification: ${status}`,
       });
 
-      setCategory('Site Inspection');
+      setNotification({
+        type: 'ok',
+        message: `Report saved. Location check: ${STATUS_LABEL[status].toLowerCase()}.${
+          usedFallback ? ' GPS was unavailable, so a default location was used.' : ''
+        }`,
+      });
+      setCategory(CATEGORIES[0]);
       setDescription('');
       handleClear();
+      await onSaved(deviceLoc.latitude, deviceLoc.longitude);
     } catch (err: any) {
-      console.error('Failed to save evidence:', err);
-      setNotification({
-        type: 'error',
-        message: `Failed to save evidence: ${err.message || 'Unknown database error'}`,
-      });
+      console.error('Failed to save report:', err);
+      setNotification({ type: 'error', message: `Could not save the report: ${err.message || 'unknown error'}` });
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="ner-card p-5 space-y-5">
-      <div className="pb-3 border-b border-gray-200 flex items-center justify-between">
-        <div>
-          <h3 className="ner-heading">1. Capture Evidence</h3>
-          <p className="text-xs text-gray-500 mt-0.5">Submit geotagged proof for road conditions or cargo</p>
-        </div>
-      </div>
+    <form onSubmit={handleSave} className="panel p-4 space-y-3">
+      <h2 className="panel-title">New report</h2>
+      <p className="text-[0.85rem] text-muted">Add a photo, a description, or both.</p>
 
       {notification && (
-        <div
-          className={`p-3 rounded text-xs flex items-start gap-2 ${
-            notification.type === 'success'
-              ? 'bg-[#e8f5e9] border border-[#81c784] text-[#1b5e20]'
-              : 'bg-[#ffebee] border border-[#e57373] text-[#c62828]'
-          }`}
-        >
-          <span className="text-sm">{notification.type === 'success' ? '✅' : '⚠️'}</span>
-          <span className="font-medium">{notification.message}</span>
-        </div>
+        <p className={`notice ${notification.type === 'ok' ? 'notice-ok' : 'notice-error'} text-[0.9rem]`}>
+          {notification.message}
+        </p>
       )}
 
-      {/* Primary Trigger: Live GPS Camera */}
+      <button type="button" onClick={() => setShowCamera(true)} className="btn btn-primary w-full">
+        Take photo with location stamp
+      </button>
+
+      <PhotoCapture onCapture={handleCapture} onClear={handleClear} existingPreview={photoPreview} />
+
       <div>
-        <button
-          type="button"
-          onClick={() => setShowCamera(true)}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-[#2d6a4f] hover:bg-[#1b4332] active:scale-[0.99] text-white text-sm font-bold rounded shadow-xs transition"
-        >
-          <span className="text-lg">📷</span>
-          <span>Open Live GPS Camera</span>
-        </button>
+        <label className="label" htmlFor="report-category">Category</label>
+        <select id="report-category" className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+          {CATEGORIES.map((c) => (
+            <option key={c}>{c}</option>
+          ))}
+        </select>
       </div>
 
-      {/* Fallback Upload */}
-      <PhotoCapture
-        onCapture={handleCapture}
-        onClear={handleClear}
-        existingPreview={photoPreview}
-      />
-
-      {/* Form Fields */}
-      <form onSubmit={handleSave} className="space-y-4 pt-1">
-        <div>
-          <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-            Evidence Category
-          </label>
-          <select
-            className="w-full text-xs p-2.5 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:border-[#2d6a4f]"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          >
-            <option value="Site Inspection">Site Inspection</option>
-            <option value="Landslide / Hazard">Landslide / Hazard Blockage</option>
-            <option value="Cargo Verification">Cargo Verification</option>
-            <option value="Damage Report">Damage Report</option>
-            <option value="Delivery Proof">Delivery Proof</option>
-            <option value="Infrastructure Audit">Bridge / Highway Audit</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
-            Observations / Field Notes
-          </label>
-          <textarea
-            rows={3}
-            className="w-full text-xs p-2.5 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:border-[#2d6a4f] placeholder:text-gray-400"
-            placeholder="Describe sector condition, vehicle clearance, road obstacles..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-        </div>
-
-        <button
-          type="submit"
-          disabled={isSaving || !photoFile}
-          className="w-full flex items-center justify-center gap-2 py-3 bg-[#1b4332] hover:bg-[#2d6a4f] active:scale-[0.99] text-white text-xs font-bold rounded shadow-xs transition disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wide"
-        >
-          {isSaving ? (
-            <>
-              <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              <span>Saving to SQLite...</span>
-            </>
-          ) : (
-            <>
-              <span>💾</span>
-              <span>Commit Evidence to GIS Map</span>
-            </>
-          )}
-        </button>
-      </form>
-
-      {/* GeoCamera Fullscreen Overlay */}
-      {showCamera && (
-        <GeoCamera
-          onCapture={handleCapture}
-          onClose={() => setShowCamera(false)}
+      <div>
+        <label className="label" htmlFor="report-notes">Notes</label>
+        <textarea
+          id="report-notes"
+          rows={3}
+          className="input"
+          placeholder="What did you see? e.g. debris covering one lane, traffic passing slowly"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
         />
-      )}
-    </div>
+      </div>
+
+      <button type="submit" disabled={isSaving || (!photoFile && !description.trim())} className="btn btn-primary w-full">
+        {isSaving ? 'Saving…' : 'Save report'}
+      </button>
+
+      {showCamera && <GeoCamera onCapture={handleCapture} onClose={() => setShowCamera(false)} />}
+    </form>
   );
 };

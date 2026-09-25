@@ -3,86 +3,48 @@ import React from 'react';
 import { Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import type { Evidence } from '../types/evidence';
+import { STATUS_COLOR, STATUS_LABEL } from '../types/evidence';
 
-// Create a local, modern SVG-based pin icon that doesn't depend on external services
-const getStatusIcon = (status: Evidence['verification_status']) => {
-  const color =
-    status === 'VERIFIED' ? '#10b981' : status === 'PENDING' ? '#f59e0b' : '#ef4444';
+const iconCache = new Map<Evidence['verification_status'], L.DivIcon>();
 
-  const svgIcon = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="28" height="42">
-      <path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 24 12 24s12-15 12-24c0-6.627-5.373-12-12-12z" fill="${color}" stroke="#ffffff" stroke-width="1.5"/>
-      <circle cx="12" cy="12" r="5" fill="#ffffff"/>
-    </svg>
-  `;
-
-  return L.divIcon({
-    html: svgIcon,
-    className: 'custom-evidence-marker',
-    iconSize: [28, 42],
-    iconAnchor: [14, 42],
-    popupAnchor: [0, -38],
-  });
+// A plain filled dot in the status colour, created once per status.
+const statusIcon = (status: Evidence['verification_status']) => {
+  let icon = iconCache.get(status);
+  if (!icon) {
+    icon = L.divIcon({
+      html: `<div style="width:14px;height:14px;border-radius:50%;background:${STATUS_COLOR[status]};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25)"></div>`,
+      className: '',
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
+      popupAnchor: [0, -8],
+    });
+    iconCache.set(status, icon);
+  }
+  return icon;
 };
 
 export const EvidenceMarker: React.FC<{ evidence: Evidence }> = ({ evidence }) => {
   const lat = Number(evidence.latitude);
   const lng = Number(evidence.longitude);
-
-  if (isNaN(lat) || isNaN(lng)) {
-    return null;
-  }
-
-  const position: L.LatLngExpression = [lat, lng];
+  if (isNaN(lat) || isNaN(lng)) return null;
 
   return (
-    <Marker position={position} icon={getStatusIcon(evidence.verification_status)}>
+    <Marker position={[lat, lng]} icon={statusIcon(evidence.verification_status)}>
       <Popup>
-        <div className="max-w-xs text-xs space-y-1.5 p-1">
+        <div className="max-w-xs space-y-1 text-[0.85rem]">
           {evidence.photo && (
-            <img
-              src={evidence.photo}
-              alt="Evidence"
-              className="w-full max-h-40 object-cover mb-2 rounded border border-gray-200"
-            />
+            <img src={evidence.photo} alt="Report photo" className="w-full max-h-40 object-cover rounded mb-1" />
           )}
-          <p className="font-bold text-sm text-gray-900">{evidence.category || 'Field Evidence'}</p>
-          {evidence.description && (
-            <p className="text-gray-700 bg-gray-50 p-1.5 rounded">{evidence.description}</p>
-          )}
-          <div className="grid grid-cols-2 gap-1 pt-1 border-t border-gray-200 text-gray-600">
-            <div>
-              <strong>Lat:</strong> {lat.toFixed(5)}°
-            </div>
-            <div>
-              <strong>Lng:</strong> {lng.toFixed(5)}°
-            </div>
-          </div>
-          <div className="text-gray-600">
-            <strong>Accuracy:</strong> ±{Math.round(Number(evidence.gps_accuracy) || 0)}m
-          </div>
-          <div className="flex items-center gap-1 font-semibold">
-            <span>Status:</span>
-            <span
-              className={
-                evidence.verification_status === 'VERIFIED'
-                  ? 'text-emerald-600'
-                  : evidence.verification_status === 'PENDING'
-                  ? 'text-amber-600'
-                  : 'text-red-600'
-              }
-            >
-              {evidence.verification_status}
-            </span>
-          </div>
-          <div className="text-gray-500 text-[10px]">
-            {evidence.timestamp ? new Date(evidence.timestamp).toLocaleString() : 'N/A'}
-          </div>
-          {evidence.verification_reason && (
-            <p className="text-[11px] text-amber-700 italic bg-amber-50 p-1 rounded">
-              {evidence.verification_reason}
-            </p>
-          )}
+          <p className="font-medium">{evidence.category || 'Field report'}</p>
+          {evidence.description && <p>{evidence.description}</p>}
+          <p className="text-muted">
+            {lat.toFixed(5)}, {lng.toFixed(5)} (±{Math.round(Number(evidence.gps_accuracy) || 0)} m)
+          </p>
+          <p>
+            Location check: {STATUS_LABEL[evidence.verification_status]}
+            {evidence.verification_reason && ` (${evidence.verification_reason})`}
+          </p>
+          <p className="text-muted">{evidence.timestamp ? new Date(evidence.timestamp).toLocaleString() : ''}</p>
         </div>
       </Popup>
     </Marker>

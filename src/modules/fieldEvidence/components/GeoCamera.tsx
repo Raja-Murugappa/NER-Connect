@@ -1,5 +1,6 @@
 // src/modules/fieldEvidence/components/GeoCamera.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { compressImage } from '../utils/imageUtils';
 
 interface GeoCameraProps {
   /**
@@ -52,7 +53,7 @@ export const GeoCamera: React.FC<GeoCameraProps> = ({ onCapture, onClose }) => {
   const [dateTime, setDateTime] = useState<string>(new Date().toLocaleString());
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
 
-  const personName = 'Field Officer';
+  const personName = 'Field officer';
 
   // Function to initialize camera stream with robust fallbacks
   const startCamera = useCallback(async (desiredFacing: 'environment' | 'user') => {
@@ -220,14 +221,14 @@ export const GeoCamera: React.FC<GeoCameraProps> = ({ onCapture, onClose }) => {
 
     const lines: string[] = [];
     if (location) {
-      lines.push(`📍 ${location.address}`);
-      lines.push(`🌐 Lat: ${location.lat.toFixed(6)}°  |  Long: ${location.lon.toFixed(6)}°`);
-      lines.push(`🎯 Accuracy: ±${Math.round(location.accuracy)}m`);
+      lines.push(location.address);
+      lines.push(`Lat ${location.lat.toFixed(6)}, Lon ${location.lon.toFixed(6)}`);
+      lines.push(`Accuracy ±${Math.round(location.accuracy)} m`);
     } else {
-      lines.push(`📍 GPS: ${locationStatus}`);
+      lines.push(`GPS: ${locationStatus}`);
     }
-    lines.push(`🕒 ${dateTime}`);
-    lines.push(`👤 Surveyor: ${personName}`);
+    lines.push(dateTime);
+    lines.push(`Recorded by: ${personName}`);
 
     const bannerHeight = lines.length * lineHeight + padding * 2;
     const bannerY = height - bannerHeight;
@@ -237,7 +238,7 @@ export const GeoCamera: React.FC<GeoCameraProps> = ({ onCapture, onClose }) => {
     ctx.fillRect(0, bannerY, width, bannerHeight);
 
     // Subtle blue accent border on top of banner
-    ctx.fillStyle = '#2563eb';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, bannerY, width, 3);
 
     // Render metadata lines with crisp white text
@@ -252,7 +253,7 @@ export const GeoCamera: React.FC<GeoCameraProps> = ({ onCapture, onClose }) => {
       ctx.fillStyle = '#000000';
       ctx.fillText(line, padding + 1, y + 1);
 
-      ctx.fillStyle = index === 0 ? '#38bdf8' : '#ffffff';
+      ctx.fillStyle = '#ffffff';
       ctx.fillText(line, padding, y);
     });
 
@@ -269,14 +270,21 @@ export const GeoCamera: React.FC<GeoCameraProps> = ({ onCapture, onClose }) => {
           type: 'image/jpeg',
           lastModified: Date.now(),
         });
-        const previewUrl = URL.createObjectURL(blob);
 
         // Stop camera tracks
         if (stream) {
           stream.getTracks().forEach((t) => t.stop());
         }
 
-        onCapture(file, previewUrl);
+        // Store the image itself (compressed data URL), not a temporary blob: link
+        // that stops working after a page reload.
+        compressImage(file)
+          .then((dataUrl) => onCapture(file, dataUrl))
+          .catch(() => {
+            const reader = new FileReader();
+            reader.onload = () => onCapture(file, reader.result as string);
+            reader.readAsDataURL(file);
+          });
       },
       'image/jpeg',
       0.92
@@ -291,118 +299,70 @@ export const GeoCamera: React.FC<GeoCameraProps> = ({ onCapture, onClose }) => {
   };
 
   return (
-    <div
-      style={{ zIndex: 99999 }}
-      className="fixed inset-0 bg-black/90 backdrop-blur-sm flex flex-col items-center justify-between p-3 sm:p-6"
-    >
-      {/* Top Header Bar */}
-      <div className="w-full max-w-2xl flex items-center justify-between z-10 py-2 px-1 text-white">
-        <div className="flex items-center space-x-2">
-          <span className="inline-block w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-          <span className="font-semibold text-sm tracking-wide uppercase">Live GPS Camera</span>
-        </div>
-
-        <div className="flex items-center space-x-2">
+    <div className="fixed inset-0 z-[99999] bg-black flex flex-col text-white">
+      <div className="flex items-center justify-between px-4 py-3">
+        <span className="font-medium">Camera</span>
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={switchCamera}
-            className="flex items-center space-x-1 px-3 py-1.5 bg-gray-800/80 hover:bg-gray-700 active:scale-95 text-white text-xs font-medium rounded-lg border border-gray-600 transition"
-            title="Switch front/back camera"
+            className="px-3 py-1.5 border border-white/40 rounded text-sm hover:bg-white/10"
           >
-            <span>🔄 Switch</span>
+            Switch camera
           </button>
           <button
             type="button"
             onClick={close}
-            className="w-8 h-8 flex items-center justify-center bg-gray-800/80 hover:bg-red-600 active:scale-95 text-white rounded-full border border-gray-600 transition text-sm font-bold"
-            title="Close camera"
+            className="px-3 py-1.5 border border-white/40 rounded text-sm hover:bg-white/10"
           >
-            ✕
+            Close
           </button>
         </div>
       </div>
 
-      {/* Camera Viewport Container */}
-      <div className="relative w-full max-w-2xl flex-1 flex items-center justify-center overflow-hidden rounded-2xl bg-zinc-950 border border-zinc-800 shadow-2xl my-2">
-        {/* Loading Spinner */}
-        {isInitializing && !cameraError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 text-white space-y-3">
-            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm font-medium">Starting camera...</p>
-          </div>
-        )}
+      <div className="relative flex-1 flex items-center justify-center overflow-hidden bg-neutral-900">
+        {isInitializing && !cameraError && <p className="absolute text-sm text-neutral-300">Starting camera…</p>}
 
-        {/* Camera Error Message */}
         {cameraError && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/90 z-20 p-6 text-center text-white space-y-4">
-            <div className="w-14 h-14 rounded-full bg-red-900/40 border border-red-500 flex items-center justify-center text-2xl">
-              ⚠️
-            </div>
-            <h3 className="text-lg font-bold text-red-400">Camera Access Error</h3>
-            <p className="text-sm text-gray-300 max-w-md">{cameraError}</p>
-            <div className="flex space-x-3 pt-2">
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 p-6 text-center bg-black">
+            <p className="text-lg font-medium">Camera not available</p>
+            <p className="text-sm text-neutral-300 max-w-md">{cameraError}</p>
+            <div className="flex gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => startCamera(facingMode)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-lg transition"
+                className="px-4 py-2 bg-white text-black rounded text-sm font-medium"
               >
-                Retry Camera
+                Try again
               </button>
-              <button
-                type="button"
-                onClick={close}
-                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium rounded-lg transition"
-              >
+              <button type="button" onClick={close} className="px-4 py-2 border border-white/40 rounded text-sm">
                 Close
               </button>
             </div>
           </div>
         )}
 
-        {/* Video stream */}
-        <video
-          ref={videoRef}
-          className="w-full h-full object-cover"
-          playsInline
-          autoPlay
-          muted
-        />
+        <video ref={videoRef} className="w-full h-full object-contain" playsInline autoPlay muted />
 
-        {/* Live GPS Watermark Card (Overlay on Preview) */}
-        <div className="absolute bottom-3 left-3 right-3 sm:right-auto sm:max-w-md bg-black/75 backdrop-blur-md p-3 rounded-xl border border-white/10 text-white text-xs space-y-1 shadow-lg pointer-events-none z-10">
-          <div className="flex items-center justify-between pb-1 border-b border-white/10">
-            <span className="font-bold text-sky-400 truncate">
-              {location ? location.address : locationStatus}
-            </span>
-          </div>
+        {/* Preview of the stamp that will be burned into the photo */}
+        <div className="absolute bottom-0 inset-x-0 bg-black/70 px-4 py-2 text-sm pointer-events-none">
           {location ? (
             <>
-              <div className="flex justify-between text-zinc-300">
-                <span>Lat: {location.lat.toFixed(6)}°</span>
-                <span>Long: {location.lon.toFixed(6)}°</span>
-              </div>
-              <div className="flex justify-between text-zinc-400">
-                <span>Accuracy: ±{Math.round(location.accuracy)}m</span>
-                <span>{dateTime}</span>
-              </div>
+              <p className="truncate">{location.address}</p>
+              <p className="text-neutral-300 tabular-nums">
+                Lat {location.lat.toFixed(6)}, Lon {location.lon.toFixed(6)}, accuracy ±{Math.round(location.accuracy)} m
+              </p>
+              <p className="text-neutral-300 tabular-nums">{dateTime}</p>
             </>
           ) : (
-            <div className="text-amber-400">{locationStatus}</div>
+            <p className="text-amber-300">{locationStatus}</p>
           )}
         </div>
       </div>
 
-      {/* Bottom Controls Bar */}
-      <div className="w-full max-w-2xl flex flex-col items-center justify-center space-y-3 z-10 py-2">
-        {/* Zoom Controls */}
-        <div className="flex items-center space-x-3 bg-zinc-900/80 px-4 py-1.5 rounded-full border border-zinc-700 text-white text-xs">
-          <button
-            type="button"
-            onClick={() => setZoom(1)}
-            className={`px-2 py-0.5 rounded ${zoom === 1 ? 'bg-blue-600 font-bold' : 'text-gray-400'}`}
-          >
-            1x
-          </button>
+      <div className="flex flex-col items-center gap-3 px-4 py-4">
+        <label className="flex items-center gap-3 text-sm text-neutral-300">
+          Zoom
           <input
             type="range"
             min="1"
@@ -410,36 +370,21 @@ export const GeoCamera: React.FC<GeoCameraProps> = ({ onCapture, onClose }) => {
             step="0.1"
             value={zoom}
             onChange={(e) => setZoom(Number(e.target.value))}
-            className="w-24 sm:w-36 accent-blue-500 cursor-pointer"
+            className="w-40 accent-white"
           />
-          <button
-            type="button"
-            onClick={() => setZoom(2)}
-            className={`px-2 py-0.5 rounded ${zoom === 2 ? 'bg-blue-600 font-bold' : 'text-gray-400'}`}
-          >
-            2x
-          </button>
-        </div>
-
-        {/* Shutter Button - Highly Visible & Prominent */}
-        <div className="flex items-center justify-center">
-          <button
-            type="button"
-            onClick={capture}
-            disabled={isInitializing || !!cameraError || isCapturing}
-            className="group relative flex items-center justify-center w-20 h-20 rounded-full border-4 border-white bg-transparent p-1 shadow-2xl transition hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Take Photo"
-          >
-            <div className="w-full h-full rounded-full bg-red-600 group-hover:bg-red-500 transition flex items-center justify-center text-2xl shadow-inner">
-              📸
-            </div>
-            <span className="sr-only">Capture Photo</span>
-          </button>
-        </div>
-        <p className="text-zinc-400 text-xs font-medium">Tap button to capture photo with GPS stamp</p>
+          <span className="tabular-nums w-8">{zoom.toFixed(1)}×</span>
+        </label>
+        <button
+          type="button"
+          onClick={capture}
+          disabled={isInitializing || !!cameraError || isCapturing}
+          className="w-16 h-16 rounded-full border-4 border-white bg-white/90 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label="Take photo"
+        />
+        <p className="text-sm text-neutral-400">The photo is stamped with your location and the time.</p>
       </div>
 
-      {/* Hidden Canvas for High-Resolution Capture */}
+      {/* Hidden canvas used to compose the stamped photo */}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
     </div>
   );

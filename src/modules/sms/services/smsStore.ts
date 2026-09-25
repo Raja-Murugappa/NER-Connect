@@ -185,6 +185,10 @@ export const smsStore = {
         status = 'failed';
         actualMessage = `${message}\n[Dispatch Error: ${err.message}]`;
       }
+    } else if (input.provider === 'msg91') {
+      // No MSG91 gateway integration exists yet (needs an auth key + DLT-approved template).
+      status = 'failed';
+      actualMessage = `${message}\n[MSG91 Error: gateway not configured — message was not sent]`;
     }
 
     const record: SMSRecord = {

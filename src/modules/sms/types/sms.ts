@@ -55,73 +55,39 @@ export const ALERT_TYPES: AlertType[] = [
 ];
 
 export const ALERT_TYPE_LABELS: Record<AlertType, string> = {
-  route_risk: '⚠️ Route Accessibility Risk',
-  reroute: '🔀 Corridor Reroute Instruction',
-  road_block: '🚧 Road Blockage',
-  landslide: '⛰️ Landslide Hazard',
-  flood: '🌊 Flood / Waterlogging',
-  weather: '🌧️ Severe Weather Warning',
-  bridge_block: '🌉 Bridge Structural Caution',
-  traffic_disruption: '🚗 Traffic Disruption',
-  emergency: '🆘 CRITICAL EMERGENCY',
-  system_test: '🔧 System Communication Test',
-  reroute_suggestion: '🗺️ Reroute Suggestion',
-  incident_reported: '📋 Incident Reported',
-  road_reopened: '✅ Road Reopened',
-  landslide_warning: '⛰️ Landslide Warning',
-  flood_warning: '🌊 Flood Warning',
-  weather_alert: '🌩️ Weather Alert',
-  emergency_sos: '🚨 Emergency SOS',
-  checkin_request: '✔️ Driver Check-In Request',
-  deadzone_precache: '📵 Dead-Zone Pre-Cache Advisory',
+  route_risk: 'Route risk',
+  reroute: 'Reroute',
+  road_block: 'Road blocked',
+  landslide: 'Landslide',
+  flood: 'Flood',
+  weather: 'Severe weather',
+  bridge_block: 'Bridge closed',
+  traffic_disruption: 'Traffic',
+  emergency: 'Emergency',
+  system_test: 'Test message',
+  reroute_suggestion: 'Reroute suggestion',
+  incident_reported: 'Incident reported',
+  road_reopened: 'Road reopened',
+  landslide_warning: 'Landslide warning',
+  flood_warning: 'Flood warning',
+  weather_alert: 'Weather alert',
+  emergency_sos: 'Emergency SOS',
+  checkin_request: 'Check-in request',
+  deadzone_precache: 'No-signal area ahead',
 };
 
-export const SEVERITY_CONFIG: Record<
-  AlertSeverity,
-  { label: string; badgeClass: string; dotClass: string }
-> = {
-  LOW: {
-    label: 'LOW',
-    badgeClass: 'bg-[#e8f5e9] border border-[#81c784] text-[#1b5e20]',
-    dotClass: 'bg-emerald-500',
-  },
-  MEDIUM: {
-    label: 'MEDIUM',
-    badgeClass: 'bg-[#fff8e1] border border-[#ffd54f] text-[#b78103]',
-    dotClass: 'bg-amber-400',
-  },
-  HIGH: {
-    label: 'HIGH',
-    badgeClass: 'bg-orange-50 border border-orange-300 text-orange-800',
-    dotClass: 'bg-orange-500',
-  },
-  CRITICAL: {
-    label: 'CRITICAL',
-    badgeClass: 'bg-[#ffebee] border border-[#e57373] text-[#c62828]',
-    dotClass: 'bg-red-600',
-  },
+export const SEVERITY_LABELS: Record<AlertSeverity, string> = {
+  LOW: 'Low',
+  MEDIUM: 'Medium',
+  HIGH: 'High',
+  CRITICAL: 'Critical',
 };
 
-export const STATUS_CONFIG: Record<
-  AlertStatus,
-  { label: string; badgeClass: string }
-> = {
-  queued: {
-    label: 'QUEUED',
-    badgeClass: 'bg-gray-100 border border-gray-300 text-gray-700',
-  },
-  sent: {
-    label: 'SENT',
-    badgeClass: 'bg-blue-50 border border-blue-300 text-blue-800',
-  },
-  delivered: {
-    label: 'DELIVERED',
-    badgeClass: 'bg-[#e8f5e9] border border-[#81c784] text-[#1b5e20]',
-  },
-  failed: {
-    label: 'FAILED',
-    badgeClass: 'bg-[#ffebee] border border-[#e57373] text-[#c62828]',
-  },
+export const STATUS_LABELS: Record<AlertStatus, string> = {
+  queued: 'Queued',
+  sent: 'Sent',
+  delivered: 'Delivered',
+  failed: 'Failed',
 };
 
 // Template-based message generation for the UI dispatcher

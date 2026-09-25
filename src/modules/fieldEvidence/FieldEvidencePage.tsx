@@ -1,53 +1,59 @@
 // src/modules/fieldEvidence/FieldEvidencePage.tsx
-import React, { useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { EvidenceMap } from './components/EvidenceMap';
 import type { EvidenceMapHandle } from './components/EvidenceMap';
 import { EvidenceForm } from './components/EvidenceForm';
 import { EvidenceList } from './components/EvidenceList';
+import { getAllEvidence } from './services/databaseService';
+import type { Evidence } from './types/evidence';
 
 export const FieldEvidencePage: React.FC = () => {
   const mapRef = useRef<EvidenceMapHandle | null>(null);
+  const [evidence, setEvidence] = useState<Evidence[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  // Records are read once and re-read only after a save (no polling).
+  const reload = useCallback(async () => {
+    try {
+      setEvidence(await getAllEvidence());
+    } catch (err) {
+      console.warn('Failed to load field reports:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const showOnMap = (ev: Evidence) => {
+    mapRef.current?.flyTo(Number(ev.latitude), Number(ev.longitude), 16);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   return (
-    <div className="flex-1 bg-[#f4f6f4] p-4 sm:p-6 space-y-6 max-w-7xl mx-auto w-full">
-      {/* Overview Bar */}
-      <div className="bg-white border border-[#d1d5db] rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="bg-[#1b4332] text-white text-xs font-bold px-2 py-0.5 rounded">
-              FIELD NODE
-            </span>
-            <h2 className="text-lg font-bold text-[#1b4332]">
-              Field Evidence &amp; Chain-of-Custody Verification
-            </h2>
-          </div>
-          <p className="text-xs text-gray-500 font-medium">
-            Tamper-Proof WebRTC Camera • Hardware GPS Pixel Burn-in • Offline SQLite WASM
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="bg-[#e8f5e9] border border-[#81c784] text-[#1b5e20] px-3.5 py-1.5 rounded text-xs font-semibold flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Cryptographic Geotagging Ready</span>
-          </div>
-        </div>
+    <div className="max-w-7xl mx-auto w-full px-4 py-4 space-y-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rise-in">
+        <h1 className="text-xl font-display font-bold tracking-tight">Field reports</h1>
+        <p className="text-[0.85rem] text-muted">
+          Reports are saved in this browser and work offline. They are not yet sent to a central server.
+        </p>
       </div>
 
-      {/* Main Grid: Form on Left, GIS Map on Right */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <section className="lg:col-span-5">
-          <EvidenceForm mapRef={mapRef} />
-        </section>
-        <section className="lg:col-span-7">
-          <EvidenceMap ref={mapRef} />
-        </section>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[380px_minmax(0,1fr)] items-start rise-in rise-in-1">
+        <EvidenceForm
+          onSaved={async (lat, lon) => {
+            await reload();
+            mapRef.current?.flyTo(lat, lon);
+          }}
+        />
+        <EvidenceMap ref={mapRef} evidence={evidence} />
       </div>
 
-      {/* Bottom Section: Evidence History Ledger */}
-      <section>
-        <EvidenceList mapRef={mapRef} />
-      </section>
+      <div className="rise-in rise-in-2">
+        <EvidenceList evidence={evidence} loading={loading} onShowOnMap={showOnMap} />
+      </div>
     </div>
   );
 };

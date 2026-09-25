@@ -1,406 +1,579 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { evaluateCorridor, evaluateReroute, fetchRouteOptions } from '../services/corridorApi';
+import type {
+  CorridorEvaluation,
+  Disruption,
+  Location,
+  RerouteResult,
+  RouteAlternative,
+  RouteLandmark,
+  SectorCard,
+} from '../services/corridorApi';
+import { CorridorMap } from './corridor/CorridorMap';
+import { PlanForm } from './corridor/PlanForm';
+import { RouteOptionsList } from './corridor/RouteOptionsList';
+import type { OptionsStatus, RouteOption } from './corridor/RouteOptionsList';
+import { SectorTable } from './corridor/SectorTable';
+import { cumulativeKm } from './corridor/routeMath';
+import { useTruckPlayback } from './corridor/useTruckPlayback';
+import { JourneyMapLayers } from './corridor/JourneyMapLayers';
+import { JourneyPanel } from './corridor/JourneyPanel';
+import type { DisruptionDraft } from './corridor/JourneyPanel';
+import { RerouteCard } from './corridor/RerouteCard';
+import { detourLabel } from './corridor/risk';
+import { buildDisruptionAlert } from './corridor/smsAlert';
+import { JourneyTimeline } from './corridor/JourneyTimeline';
+import type { JourneyEvent } from './corridor/JourneyTimeline';
+import { smsStore } from '../modules/sms/services/smsStore';
 
 interface Preset {
-  name: string;
-  startLat: number;
-  startLon: number;
-  endLat: number;
-  endLon: number;
-  distanceKm: number;
-  eta: string;
+  label: string;
+  origin: Location;
+  destination: Location;
 }
 
 const PRESETS: Record<string, Preset> = {
   guwahati_gangtok: {
-    name: 'Guwahati-Gangtok Strategic Corridor',
-    startLat: 26.1445,
-    startLon: 91.7362,
-    endLat: 27.3389,
-    endLon: 88.6065,
-    distanceKm: 519.1,
-    eta: '11h 45m',
+    label: 'Guwahati to Gangtok',
+    origin: { name: 'Guwahati', lat: 26.1445, lon: 91.7362 },
+    destination: { name: 'Gangtok', lat: 27.3389, lon: 88.6065 },
   },
   guwahati_shillong: {
-    name: 'Guwahati-Shillong Highland Corridor (NH-6)',
-    startLat: 26.1445,
-    startLon: 91.7362,
-    endLat: 25.5788,
-    endLon: 91.8933,
-    distanceKm: 98.4,
-    eta: '2h 50m',
+    label: 'Guwahati to Shillong',
+    origin: { name: 'Guwahati', lat: 26.1445, lon: 91.7362 },
+    destination: { name: 'Shillong', lat: 25.5788, lon: 91.8933 },
   },
   silchar_aizawl: {
-    name: 'Silchar-Aizawl Border Highway (NH-306)',
-    startLat: 24.8333,
-    startLon: 92.7789,
-    endLat: 23.7271,
-    endLon: 92.7176,
-    distanceKm: 172.5,
-    eta: '5h 15m',
+    label: 'Silchar to Aizawl',
+    origin: { name: 'Silchar', lat: 24.8333, lon: 92.7789 },
+    destination: { name: 'Aizawl', lat: 23.7271, lon: 92.7176 },
   },
   tezpur_tawang: {
-    name: 'Tezpur-Tawang Trans-Himalayan Highway (NH-13)',
-    startLat: 26.6528,
-    startLon: 92.7926,
-    endLat: 27.5861,
-    endLon: 91.8594,
-    distanceKm: 326.0,
-    eta: '9h 30m',
+    label: 'Tezpur to Tawang',
+    origin: { name: 'Tezpur', lat: 26.6528, lon: 92.7926 },
+    destination: { name: 'Tawang', lat: 27.5861, lon: 91.8594 },
   },
 };
+const PRESET_OPTIONS = Object.entries(PRESETS).map(([key, p]) => ({ key, label: p.label }));
+const DEFAULT_KEY = 'guwahati_gangtok';
+const DEFAULT_PRESET = PRESETS[DEFAULT_KEY];
 
-// 2D Institutional Leaflet Icon
-const create2DIcon = (emoji: string) =>
-  L.divIcon({
-    html: `<div style="
-      background: #ffffff;
-      border: 2px solid #1b4332;
-      border-radius: 4px;
-      padding: 2px 4px;
-      font-size: 14px;
-      line-height: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
-    ">${emoji}</div>`,
-    className: 'custom-2d-marker',
-    iconSize: [26, 26],
-    iconAnchor: [13, 26],
-    popupAnchor: [0, -26],
-  });
+/** The route the simulated truck is currently following. */
+interface ActiveRoute {
+  polyline: [number, number][];
+  sectors: SectorCard[];
+  junctions: RouteLandmark[];
+  bridges: RouteLandmark[];
+}
+
+interface Journey {
+  routeId: string;
+  route: ActiveRoute;
+  /** Travelled parts of routes followed before a reroute. */
+  trails: [number, number][][];
+  /** Parts of earlier routes given up after a reroute. */
+  abandoned: [number, number][][];
+}
+
+const DISRUPTION_NAMES: Record<Disruption['type'], string> = {
+  landslide: 'Landslide',
+  flood: 'Flood',
+  bridge_closure: 'Bridge closure',
+  road_block: 'Road block',
+};
+
+const clockTime = () =>
+  new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+const optionFromEvaluation = (r: CorridorEvaluation): RouteOption => ({
+  id: 'A',
+  polyline: r.full_polyline,
+  distance_km: r.total_distance_km,
+  eta: r.total_journey_eta,
+  eta_mins: r.total_journey_mins,
+  risk: r.risk,
+  sectors: r.sectors,
+  junctions: r.junctions,
+  bridges: r.bridges,
+});
 
 export const CorridorPage: React.FC = () => {
-  const [selectedPresetKey, setSelectedPresetKey] = useState<string>('guwahati_gangtok');
+  // ─── Planning ───────────────────────────────────────────────────────────────
+  const [presetKey, setPresetKey] = useState<string>(DEFAULT_KEY);
   const [scenario, setScenario] = useState<'1' | '2'>('1');
+  const [corridorName, setCorridorName] = useState<string>(DEFAULT_PRESET.label);
+  const [originQuery, setOriginQuery] = useState<string>(DEFAULT_PRESET.origin.name);
+  const [destQuery, setDestQuery] = useState<string>(DEFAULT_PRESET.destination.name);
+  // Last resolved endpoints; reused as coordinates while the input text still matches.
+  const [origin, setOrigin] = useState<Location>(DEFAULT_PRESET.origin);
+  const [destination, setDestination] = useState<Location>(DEFAULT_PRESET.destination);
+  const [result, setResult] = useState<CorridorEvaluation | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
-  const [activePreset, setActivePreset] = useState<Preset>(PRESETS.guwahati_gangtok);
+  const [options, setOptions] = useState<RouteOption[]>([]);
+  const [optionsStatus, setOptionsStatus] = useState<OptionsStatus>('idle');
+  const [optionsMessage, setOptionsMessage] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string>('A');
+  const [focusPoints, setFocusPoints] = useState<[number, number][] | null>(null);
+  const requestId = useRef(0);
 
-  const handlePresetChange = (key: string) => {
-    setSelectedPresetKey(key);
-    if (PRESETS[key]) {
-      setActivePreset(PRESETS[key]);
+  const runEvaluation = useCallback(
+    async (roadName: string, from: string | Location, to: string | Location, scenarioValue: '1' | '2') => {
+      const id = ++requestId.current;
+      setIsEvaluating(true);
+      setError(null);
+      setOptionsStatus('idle');
+      setOptionsMessage(null);
+      try {
+        const data = await evaluateCorridor({ road_name: roadName, origin: from, destination: to, scenario: scenarioValue });
+        if (id !== requestId.current) return; // a newer request superseded this one
+        setResult(data);
+        setOrigin(data.origin);
+        setDestination(data.destination);
+        setOptions([optionFromEvaluation(data)]);
+        setSelectedId('A');
+        setFocusPoints(null);
+        setIsEvaluating(false);
+        if (data.routing_status !== 'SUCCESS') return;
+
+        // Other roads between the same places can take longer; show the main route first.
+        setOptionsStatus('loading');
+        try {
+          const more = await fetchRouteOptions({
+            road_name: roadName,
+            origin: data.origin,
+            destination: data.destination,
+            scenario: scenarioValue,
+          });
+          if (id !== requestId.current) return;
+          setOptions((prev) => [
+            ...prev.slice(0, 1),
+            ...more.alternatives.map((a, i) => ({ ...a, id: String.fromCharCode(66 + i) })), // B, C
+          ]);
+          setOptionsStatus(more.searched ? 'done' : 'unavailable');
+          setOptionsMessage(more.message ?? null);
+        } catch (err: any) {
+          if (id !== requestId.current) return;
+          setOptionsStatus('unavailable');
+          setOptionsMessage(err.message);
+        }
+      } catch (err: any) {
+        if (id === requestId.current) setError(err.message);
+      } finally {
+        if (id === requestId.current) setIsEvaluating(false);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    runEvaluation(DEFAULT_PRESET.label, DEFAULT_PRESET.origin, DEFAULT_PRESET.destination, '1');
+  }, [runEvaluation]);
+
+  // Send known coordinates when the text is unchanged, otherwise let the backend look up the name.
+  const currentEndpoints = (): [string | Location, string | Location] => [
+    originQuery.trim() === origin.name ? origin : originQuery.trim(),
+    destQuery.trim() === destination.name ? destination : destQuery.trim(),
+  ];
+
+  const selectedOption = options.find((o) => o.id === selectedId) ?? options[0];
+
+  const selectRoute = useCallback((id: string) => {
+    setSelectedId(id);
+    setFocusPoints(null);
+  }, []);
+
+  // ─── Journey simulation & dynamic rerouting ─────────────────────────────────
+  const [journey, setJourney] = useState<Journey | null>(null);
+  const playback = useTruckPlayback(journey?.route.polyline.length ?? 0);
+  const [draft, setDraft] = useState<DisruptionDraft>({
+    type: 'landslide',
+    severity: 'blocked',
+    radius_km: 2,
+    outcome: 'auto',
+  });
+  const [placing, setPlacing] = useState<boolean>(false);
+  const [disruption, setDisruption] = useState<Disruption | null>(null);
+  const [reroute, setReroute] = useState<RerouteResult | null>(null);
+  const [rerouteError, setRerouteError] = useState<string | null>(null);
+  const [rerouteLoading, setRerouteLoading] = useState<boolean>(false);
+  const [elapsedSec, setElapsedSec] = useState<number>(0);
+  const [selectedAltId, setSelectedAltId] = useState<string | null>(null);
+  const [events, setEvents] = useState<JourneyEvent[]>([]);
+  const rerouteRequestId = useRef(0);
+
+  const routeKm = useMemo(() => cumulativeKm(journey?.route.polyline ?? []), [journey]);
+  const truckKm = routeKm[playback.index] ?? 0;
+  const routeTotalKm = routeKm[routeKm.length - 1] ?? 0;
+
+  useEffect(() => {
+    if (!rerouteLoading) return;
+    const timer = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [rerouteLoading]);
+
+  const logEvent = (text: string) => setEvents((prev) => [...prev, { time: clockTime(), text }]);
+
+  const clearDisruptionState = () => {
+    rerouteRequestId.current++; // ignore any in-flight check
+    setPlacing(false);
+    setDisruption(null);
+    setReroute(null);
+    setRerouteError(null);
+    setRerouteLoading(false);
+    setSelectedAltId(null);
+  };
+
+  const stopJourney = () => {
+    playback.pause();
+    playback.setIndex(0);
+    clearDisruptionState();
+    setJourney(null);
+    setEvents([]);
+  };
+
+  const startJourney = () => {
+    if (!selectedOption) return;
+    clearDisruptionState();
+    setFocusPoints(null);
+    setJourney({
+      routeId: selectedOption.id,
+      route: {
+        polyline: selectedOption.polyline,
+        sectors: selectedOption.sectors,
+        junctions: selectedOption.junctions,
+        bridges: selectedOption.bridges,
+      },
+      trails: [],
+      abandoned: [],
+    });
+    playback.setIndex(0);
+    setEvents([
+      {
+        time: clockTime(),
+        text: `Journey started on route ${selectedOption.id}: ${corridorName}, ${selectedOption.distance_km.toFixed(0)} km.`,
+      },
+    ]);
+    playback.play();
+  };
+
+  const placeDisruption = async (lat: number, lon: number) => {
+    if (!journey) return;
+    const { outcome, ...disruptionFields } = draft;
+    const d: Disruption = { lat, lon, ...disruptionFields };
+    const wasPlaying = playback.playing;
+    const truckPosition = journey.route.polyline[playback.index];
+    const id = ++rerouteRequestId.current;
+
+    playback.pause();
+    setPlacing(false);
+    setDisruption(d);
+    setReroute(null);
+    setRerouteError(null);
+    setSelectedAltId(null);
+    setElapsedSec(0);
+    setRerouteLoading(true);
+    logEvent(
+      `${DISRUPTION_NAMES[d.type]} reported (${d.severity === 'blocked' ? 'road blocked' : 'slow down'}) while the truck was at km ${truckKm.toFixed(0)}.`
+    );
+
+    try {
+      const res = await evaluateReroute({
+        current_route: journey.route.polyline,
+        truck_position: truckPosition,
+        disruption: d,
+        road_name: corridorName,
+        scenario,
+        outcome: d.severity === 'blocked' ? outcome : 'auto',
+      });
+      if (id !== rerouteRequestId.current) return;
+      if (res.relocated_from) {
+        // force_reroute moved the simulated disruption to a spot with a real detour
+        setDisruption({ ...d, lat: res.disruption.lat, lon: res.disruption.lon });
+      }
+      const recommendedAlt = res.alternatives.find((a) => a.recommended);
+      setReroute(res);
+      setSelectedAltId(recommendedAlt?.id ?? null);
+      logEvent(res.message);
+      // Only a blocking disruption needs an operator decision; otherwise keep driving.
+      const needsDecision = ['REROUTE_AVAILABLE', 'NO_ALTERNATIVE', 'ROUTING_UNAVAILABLE'].includes(res.status);
+      if (needsDecision) {
+        autoNotifyVerifiedDrivers(res, recommendedAlt); // runs in the background, doesn't block the UI
+      } else if (wasPlaying) {
+        playback.play();
+      }
+    } catch (err: any) {
+      if (id !== rerouteRequestId.current) return;
+      setRerouteError(err.message);
+      logEvent(`Disruption check failed: ${err.message}`);
+    } finally {
+      if (id === rerouteRequestId.current) setRerouteLoading(false);
     }
   };
 
-  const handleEvaluate = () => {
-    setIsEvaluating(true);
-    setTimeout(() => {
-      setIsEvaluating(false);
-    }, 400);
+  const acceptReroute = () => {
+    const alt = reroute?.alternatives.find((a) => a.id === selectedAltId);
+    if (!journey || !alt) return;
+    const idx = playback.index;
+    setJourney({
+      ...journey,
+      route: { polyline: alt.polyline, sectors: alt.sectors, junctions: alt.junctions, bridges: alt.bridges },
+      trails: [...journey.trails, journey.route.polyline.slice(0, idx + 1)],
+      abandoned: [...journey.abandoned, journey.route.polyline.slice(idx)],
+    });
+    playback.setIndex(0);
+    setReroute(null);
+    setSelectedAltId(null);
+    logEvent(
+      `Operator took ${detourLabel(alt.id).toLowerCase()}: ${alt.distance_km.toFixed(0)} km to go (${alt.extra_km >= 0 ? '+' : ''}${alt.extra_km.toFixed(0)} km, ${alt.extra_mins >= 0 ? '+' : ''}${alt.extra_mins} min).`
+    );
+    playback.play();
   };
 
-  const isSevere = scenario === '2';
-  const startPos: [number, number] = [activePreset.startLat, activePreset.startLon];
-  const endPos: [number, number] = [activePreset.endLat, activePreset.endLon];
+  const keepRoute = () => {
+    if (!reroute) return;
+    if (reroute.status === 'REROUTE_AVAILABLE') {
+      logEvent('Operator kept the current route despite the blockage.');
+      playback.play();
+    } else if (reroute.hold_point) {
+      logEvent(`Operator acknowledged: vehicle to hold at ${reroute.hold_point.name}.`);
+    }
+    setReroute(null);
+    setSelectedAltId(null);
+  };
 
-  // Route points simulation for map visualization
-  const routePoints: [number, number][] = [
-    startPos,
-    [(startPos[0] + endPos[0]) / 2 + 0.1, (startPos[1] + endPos[1]) / 2 - 0.2],
-    [(startPos[0] + endPos[0]) / 2, (startPos[1] + endPos[1]) / 2],
-    [(startPos[0] + endPos[0]) / 2 - 0.05, (startPos[1] + endPos[1]) / 2 + 0.15],
-    endPos,
-  ];
+  const dismissRerouteMessage = () => {
+    setReroute(null);
+    setRerouteError(null);
+  };
+
+  // Sends a real SMS to every Twilio-verified driver as soon as a disruption actually blocks
+  // the truck's route - automatic, no manual step. "Verified" drivers are the ones already
+  // approved to receive SMS on the Twilio trial account (smsStore.VERIFIED_NUMBERS / the
+  // 'd-verified-*' driver ids).
+  const autoNotifyVerifiedDrivers = async (res: RerouteResult, alt: RouteAlternative | null | undefined) => {
+    const verified = smsStore.listDrivers().filter((d) => d.id.startsWith('d-verified'));
+    if (verified.length === 0) {
+      logEvent('No verified drivers registered, so no automatic SMS was sent.');
+      return;
+    }
+    const alertContent = buildDisruptionAlert(res, corridorName, alt);
+    try {
+      const results = await smsStore.bulkDispatch(
+        {
+          alertType: alertContent.alertType,
+          severity: alertContent.severity,
+          language: 'en',
+          provider: 'twilio',
+          variables: {
+            location: alertContent.location,
+            alternateRoute: alertContent.alternateRoute,
+            checkpointName: alertContent.checkpointName,
+            statusNote: 'Automatic alert from a simulated disruption',
+          },
+        },
+        verified.map((d) => d.id)
+      );
+      const ok = results.filter((r) => r.status === 'sent' || r.status === 'delivered').length;
+      logEvent(
+        `SMS sent automatically to ${verified.length} verified driver(s): ${ok} sent, ${results.length - ok} failed.`
+      );
+    } catch (err: any) {
+      logEvent(`Automatic SMS to verified drivers failed: ${err.message}`);
+    }
+  };
+
+  // Opens the SMS alerts page in a new tab (so the journey keeps running) to compose or
+  // resend the alert - e.g. after switching to a different detour.
+  const notifyDriver = () => {
+    if (!reroute) return;
+    const alt = reroute.alternatives.find((a) => a.id === selectedAltId);
+    const alertContent = buildDisruptionAlert(reroute, corridorName, alt);
+    const params = new URLSearchParams({
+      type: alertContent.alertType,
+      location: alertContent.location,
+      alternateRoute: alertContent.alternateRoute,
+      ...(alertContent.checkpointName ? { checkpoint: alertContent.checkpointName } : {}),
+    });
+    window.open(`/sms?${params.toString()}`, '_blank', 'noopener');
+    logEvent('SMS composer opened in a new tab.');
+  };
+
+  // ─── Planning form handlers ─────────────────────────────────────────────────
+  const handlePresetChange = (key: string) => {
+    const preset = PRESETS[key];
+    if (!preset) return;
+    stopJourney();
+    setPresetKey(key);
+    setCorridorName(preset.label);
+    setOriginQuery(preset.origin.name);
+    setDestQuery(preset.destination.name);
+    runEvaluation(preset.label, preset.origin, preset.destination, scenario);
+  };
+
+  const handleSubmit = () => {
+    const from = originQuery.trim();
+    const to = destQuery.trim();
+    if (!from || !to) {
+      setError('Enter where the trip starts and ends.');
+      return;
+    }
+    stopJourney();
+    const preset = PRESETS[presetKey];
+    let roadName = corridorName;
+    if (!preset || from !== preset.origin.name || to !== preset.destination.name) {
+      roadName = `${from} to ${to}`;
+      setPresetKey('custom');
+      setCorridorName(roadName);
+    }
+    const [f, t] = currentEndpoints();
+    runEvaluation(roadName, f, t, scenario);
+  };
+
+  const handleScenarioChange = (value: '1' | '2') => {
+    stopJourney();
+    setScenario(value);
+    const [f, t] = currentEndpoints();
+    runEvaluation(corridorName, f, t, value);
+  };
+
+  // ─── What the map and table show ────────────────────────────────────────────
+  // While a journey runs they follow the truck's active route (which changes after a reroute);
+  // otherwise the selected route option.
+  const shown: ActiveRoute | null = journey ? journey.route : (selectedOption ?? null);
+  const otherOptions = useMemo(
+    () => (journey ? [] : options.filter((o) => o.id !== selectedId)),
+    [journey, options, selectedId]
+  );
+  const rerouted = (journey?.trails.length ?? 0) > 0;
+  const isFallback = result?.routing_status === 'FALLBACK';
+  const tableTitle = journey
+    ? rerouted
+      ? 'Sectors on the rerouted journey'
+      : `Sectors on route ${journey.routeId}`
+    : `Sectors on route ${selectedOption?.id ?? 'A'}`;
+
+  const showSectorOnMap = useCallback((s: SectorCard) => setFocusPoints(s.polyline), []);
+  const emptyLine = useMemo<[number, number][]>(() => [], []);
+  const emptyLandmarks = useMemo<RouteLandmark[]>(() => [], []);
 
   return (
-    <div className="flex-1 bg-[#f4f6f4] p-4 sm:p-6 space-y-6 max-w-7xl mx-auto w-full">
-      {/* Overview Bar */}
-      <div className="bg-white border border-[#d1d5db] rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 shadow-xs">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="bg-[#1b4332] text-white text-xs font-bold px-2 py-0.5 rounded">
-              CORRIDOR
-            </span>
-            <h2 className="text-lg font-bold text-[#1b4332]">{activePreset.name}</h2>
-          </div>
-          <p className="text-xs text-gray-500 font-medium">
-            {activePreset.distanceKm} km Verified Road Route • OpenStreetMap (OSRM) Active
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="bg-[#e8f5e9] border border-[#81c784] text-[#1b5e20] px-3.5 py-1.5 rounded text-xs font-semibold flex items-center gap-2">
-            <span>⏱️ Total Journey ETA:</span>
-            <strong className="text-sm font-bold">
-              {isSevere ? '14h 25m (+2h 40m delay)' : activePreset.eta}
-            </strong>
-          </div>
-          <Link
-            to="/field-evidence"
-            className="bg-[#2d6a4f] hover:bg-[#1b4332] text-white text-xs font-bold px-3.5 py-2 rounded transition flex items-center gap-1.5"
-          >
-            <span>📷</span>
-            <span>Log Field Evidence</span>
-          </Link>
-        </div>
+    <div className="max-w-7xl mx-auto w-full px-4 py-4 space-y-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rise-in">
+        <h1 className="text-xl font-display font-bold tracking-tight">{corridorName}</h1>
+        <p className="text-[0.85rem] text-muted">
+          Roads from OpenStreetMap. Risk is a model estimate from sample hazard data, not a live feed.
+        </p>
       </div>
 
-      {/* Main Grid: Controls on Left, GIS Map on Right */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Sidebar: Controls & Scenario */}
-        <div className="space-y-5 lg:col-span-1">
-          <div className="ner-card p-4 space-y-4">
-            <h3 className="ner-heading pb-2 border-b border-gray-200">1. Corridor Configuration</h3>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_minmax(0,1fr)] items-start">
+        <aside className="space-y-4 min-w-0 rise-in rise-in-1">
+          <PlanForm
+            originQuery={originQuery}
+            destQuery={destQuery}
+            onOriginChange={setOriginQuery}
+            onDestChange={setDestQuery}
+            presets={PRESET_OPTIONS}
+            presetKey={presetKey}
+            onPresetChange={handlePresetChange}
+            scenario={scenario}
+            onScenarioChange={handleScenarioChange}
+            onSubmit={handleSubmit}
+            busy={isEvaluating}
+            error={error}
+          />
+          <RouteOptionsList
+            options={options}
+            selectedId={selectedId}
+            onSelect={selectRoute}
+            status={optionsStatus}
+            message={optionsMessage}
+            disabled={!!journey}
+          />
+          {selectedOption && (
+            <JourneyPanel
+              canStart={!!result && !isEvaluating && !isFallback}
+              routeLabel={`route ${selectedOption.id}`}
+              journeyActive={!!journey}
+              onStart={startJourney}
+              onStop={stopJourney}
+              playing={playback.playing}
+              onPlay={playback.play}
+              onPause={playback.pause}
+              truckIndex={playback.index}
+              maxIndex={Math.max(0, (journey?.route.polyline.length ?? 1) - 1)}
+              onSeek={playback.setIndex}
+              truckKm={truckKm}
+              totalKm={routeTotalKm}
+              draft={draft}
+              onDraftChange={setDraft}
+              placing={placing}
+              onTogglePlacing={() => setPlacing((p) => !p)}
+              evaluating={rerouteLoading}
+            />
+          )}
+        </aside>
 
-            <div>
-              <label className="block text-xs font-bold text-gray-700 mb-1">
-                Popular Strategic Corridor
-              </label>
-              <select
-                className="w-full text-xs p-2.5 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:border-[#2d6a4f]"
-                value={selectedPresetKey}
-                onChange={(e) => handlePresetChange(e.target.value)}
-              >
-                <option value="guwahati_gangtok">Guwahati (Assam) ➔ Gangtok (Sikkim)</option>
-                <option value="guwahati_shillong">Guwahati (Assam) ➔ Shillong (Meghalaya)</option>
-                <option value="silchar_aizawl">Silchar (Assam) ➔ Aizawl (Mizoram)</option>
-                <option value="tezpur_tawang">Tezpur (Assam) ➔ Tawang (Arunachal)</option>
-              </select>
+        <section className="space-y-4 min-w-0 rise-in rise-in-2">
+          {isFallback && result?.routing_warning && <p className="notice notice-warn">{result.routing_warning}</p>}
+          {journey && (
+            <RerouteCard
+              evaluating={rerouteLoading}
+              elapsedSec={elapsedSec}
+              error={rerouteError}
+              reroute={reroute}
+              selectedAltId={selectedAltId}
+              onSelectAlt={setSelectedAltId}
+              onAccept={acceptReroute}
+              onKeep={keepRoute}
+              onNotify={notifyDriver}
+              onDismiss={dismissRerouteMessage}
+            />
+          )}
+
+          <CorridorMap
+            origin={origin}
+            destination={destination}
+            sectors={shown?.sectors ?? []}
+            line={shown?.polyline ?? emptyLine}
+            junctions={shown?.junctions ?? emptyLandmarks}
+            bridges={shown?.bridges ?? emptyLandmarks}
+            otherOptions={otherOptions}
+            onSelectOption={selectRoute}
+            dashed={isFallback}
+            fitPoints={focusPoints ?? shown?.polyline ?? emptyLine}
+            journeyActive={!!journey}
+            placingDisruption={placing}
+          >
+            {journey && (
+              <JourneyMapLayers
+                routeLine={journey.route.polyline}
+                truckIndex={playback.index}
+                truckKm={truckKm}
+                previousTrails={journey.trails}
+                abandoned={journey.abandoned}
+                disruption={disruption}
+                reroute={reroute}
+                selectedAltId={selectedAltId}
+                onSelectAlt={setSelectedAltId}
+                placing={placing}
+                onMapClick={placeDisruption}
+              />
+            )}
+          </CorridorMap>
+
+          <JourneyTimeline events={events} />
+
+          {!result && !error && (
+            <div className="panel p-4 space-y-2.5" aria-label="Calculating the route">
+              <div className="skeleton h-4 w-2/5" />
+              <div className="skeleton h-3 w-full" />
+              <div className="skeleton h-3 w-4/5" />
+              <div className="skeleton h-3 w-3/5" />
             </div>
-
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2 bg-gray-50 border border-gray-200 rounded">
-                <span className="text-gray-500 block text-[10px] uppercase font-bold">Origin Lat/Lon</span>
-                <span className="font-mono font-semibold">{activePreset.startLat.toFixed(4)}, {activePreset.startLon.toFixed(4)}</span>
-              </div>
-              <div className="p-2 bg-gray-50 border border-gray-200 rounded">
-                <span className="text-gray-500 block text-[10px] uppercase font-bold">Dest Lat/Lon</span>
-                <span className="font-mono font-semibold">{activePreset.endLat.toFixed(4)}, {activePreset.endLon.toFixed(4)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="ner-card p-4 space-y-4">
-            <h3 className="ner-heading pb-2 border-b border-gray-200">2. External Hazard Scenario</h3>
-
-            <div className="space-y-2 text-xs">
-              <label
-                className={`flex items-start gap-2.5 p-2.5 rounded border cursor-pointer transition ${
-                  scenario === '1'
-                    ? 'bg-[#e8f5e9] border-[#81c784] text-[#1b5e20]'
-                    : 'bg-white border-gray-200 text-gray-700'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="scenario"
-                  value="1"
-                  checked={scenario === '1'}
-                  onChange={() => setScenario('1')}
-                  className="mt-0.5 accent-[#2d6a4f]"
-                />
-                <div>
-                  <strong className="block font-semibold">Normal Daily Operations</strong>
-                  <span className="text-gray-500 text-[11px]">Standard baseline alert feeds (0.15 - 0.25)</span>
-                </div>
-              </label>
-
-              <label
-                className={`flex items-start gap-2.5 p-2.5 rounded border cursor-pointer transition ${
-                  scenario === '2'
-                    ? 'bg-[#ffebee] border-[#e57373] text-[#c62828]'
-                    : 'bg-white border-gray-200 text-gray-700'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="scenario"
-                  value="2"
-                  checked={scenario === '2'}
-                  onChange={() => setScenario('2')}
-                  className="mt-0.5 accent-[#c62828]"
-                />
-                <div>
-                  <strong className="block font-semibold">Ingest Severe Hazard Warning</strong>
-                  <span className="text-gray-500 text-[11px]">
-                    Simulate active ISRO/CWC warning (0.88) on mountain sectors
-                  </span>
-                </div>
-              </label>
-            </div>
-
-            <button
-              type="button"
-              onClick={handleEvaluate}
-              disabled={isEvaluating}
-              className="w-full bg-[#2d6a4f] hover:bg-[#1b4332] active:scale-[0.99] text-white text-xs font-bold py-2.5 rounded shadow-xs transition"
-            >
-              {isEvaluating ? 'Evaluating Sectors...' : 'Calculate Route & Evaluate Sectors'}
-            </button>
-          </div>
-
-          {/* Quick Metrics */}
-          <div className="ner-card p-4 space-y-2 text-xs">
-            <h4 className="font-bold text-[#1b4332] uppercase text-[11px] tracking-wide">
-              Operational Summary
-            </h4>
-            <div className="flex justify-between py-1 border-b border-gray-100">
-              <span className="text-gray-600">Total Distance:</span>
-              <strong className="font-mono">{activePreset.distanceKm} km</strong>
-            </div>
-            <div className="flex justify-between py-1 border-b border-gray-100">
-              <span className="text-gray-600">Strategic Sectors:</span>
-              <strong className="font-mono">8 Sectors (≥50km)</strong>
-            </div>
-            <div className="flex justify-between py-1">
-              <span className="text-gray-600">Disruption Status:</span>
-              <span className={isSevere ? 'badge-danger' : 'badge-safe'}>
-                {isSevere ? 'HIGH RISK' : 'LOW / SAFE'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Section: 2D GIS Map & Legend */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="ner-card overflow-hidden">
-            <div className="ner-card-header bg-[#f8faf8]">
-              <span className="text-xs font-bold text-[#1b4332] uppercase tracking-wider flex items-center gap-1.5">
-                <span>🗺️</span> 2D OpenStreetMap Corridor Visualization
-              </span>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-gray-500">Routing:</span>
-                <span className="font-semibold text-gray-800">OSRM Real Highway</span>
-              </div>
-            </div>
-
-            <div className="h-[420px] w-full relative">
-              <MapContainer
-                center={[(startPos[0] + endPos[0]) / 2, (startPos[1] + endPos[1]) / 2]}
-                zoom={7}
-                style={{ height: '100%', width: '100%' }}
-              >
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-
-                <Polyline
-                  positions={routePoints}
-                  color={isSevere ? '#dc2626' : '#2d6a4f'}
-                  weight={isSevere ? 6 : 5}
-                  opacity={0.88}
-                />
-
-                <Marker position={startPos} icon={create2DIcon('🚩')}>
-                  <Popup>
-                    <div className="text-xs">
-                      <strong className="text-[#1b4332]">Origin Point</strong>
-                      <p>{activePreset.name.split('➔')[0]}</p>
-                    </div>
-                  </Popup>
-                </Marker>
-
-                <Marker position={endPos} icon={create2DIcon('🏁')}>
-                  <Popup>
-                    <div className="text-xs">
-                      <strong className="text-[#1b4332]">Destination Point</strong>
-                      <p>{activePreset.name.split('➔')[1] || activePreset.name}</p>
-                    </div>
-                  </Popup>
-                </Marker>
-
-                {/* Waypoint Junction */}
-                <Marker
-                  position={[(startPos[0] + endPos[0]) / 2, (startPos[1] + endPos[1]) / 2]}
-                  icon={create2DIcon('🔀')}
-                >
-                  <Popup>
-                    <div className="text-xs">
-                      <strong className="text-[#1b4332]">🔀 Strategic Reroute Junction</strong>
-                      <p>Alternative Bypass Option</p>
-                    </div>
-                  </Popup>
-                </Marker>
-              </MapContainer>
-
-              {/* Map Legend */}
-              <div className="absolute bottom-2 left-2 z-[400] bg-white/95 border border-[#d1d5db] px-3 py-1.5 rounded shadow-sm flex flex-wrap items-center gap-3 text-[11px] font-semibold text-gray-700">
-                <div className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-[#2d6a4f]" /> Safe Sector
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-[#f59e0b]" /> Caution Advisory
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-3 h-3 rounded-full bg-[#dc2626]" /> Hazard Warning
-                </div>
-                <div className="flex items-center gap-1">
-                  <span>🔀</span> Junction
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Strategic Operational Sectors (Cards List) */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#1b4332] uppercase tracking-wide">
-                Strategic Operational Sectors (Sectors ≥ 50 km)
-              </h3>
-              <span className="text-xs text-gray-500 font-medium">Physical Elevation + ISRO/CWC Feeds</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="ner-card p-3 space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-xs text-[#1b4332]">SEC-01: Plains Transition</span>
-                  <span className="badge-safe">SAFE</span>
-                </div>
-                <p className="text-xs text-gray-600">Elev: 54m • Slope: 2.1% • Rain: 12mm</p>
-                <div className="text-[11px] text-gray-500 flex justify-between">
-                  <span>Speed Limit: 60 km/h</span>
-                  <span>Delay: 0 mins</span>
-                </div>
-              </div>
-
-              <div className="ner-card p-3 space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-xs text-[#1b4332]">SEC-02: Foothills Gateway</span>
-                  <span className={isSevere ? 'badge-danger' : 'badge-caution'}>
-                    {isSevere ? 'DANGER' : 'CAUTION'}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600">Elev: 410m • Slope: 18.4% • Rain: {isSevere ? '145mm' : '38mm'}</p>
-                <div className="text-[11px] text-gray-500 flex justify-between">
-                  <span>Speed Limit: 40 km/h</span>
-                  <span>Delay: {isSevere ? '+45 mins' : '+10 mins'}</span>
-                </div>
-              </div>
-
-              <div className="ner-card p-3 space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-xs text-[#1b4332]">SEC-03: Highland Ridge</span>
-                  <span className={isSevere ? 'badge-danger' : 'badge-safe'}>
-                    {isSevere ? 'DANGER' : 'SAFE'}
-                  </span>
-                </div>
-                <p className="text-xs text-gray-600">Elev: 1,420m • Slope: 28.5% • Rain: {isSevere ? '180mm' : '15mm'}</p>
-                <div className="text-[11px] text-gray-500 flex justify-between">
-                  <span>Landslide Risk: {isSevere ? '84%' : '12%'}</span>
-                  <span>Delay: {isSevere ? '+80 mins' : '0 mins'}</span>
-                </div>
-              </div>
-
-              <div className="ner-card p-3 space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-xs text-[#1b4332]">SEC-04: Valley Border Link</span>
-                  <span className="badge-safe">SAFE</span>
-                </div>
-                <p className="text-xs text-gray-600">Elev: 890m • Slope: 9.2% • Rain: 20mm</p>
-                <div className="text-[11px] text-gray-500 flex justify-between">
-                  <span>Mobile Signal: GOOD</span>
-                  <span>Delay: 0 mins</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+          )}
+          <SectorTable title={tableTitle} sectors={shown?.sectors ?? []} onShowOnMap={showSectorOnMap} />
+        </section>
       </div>
     </div>
   );

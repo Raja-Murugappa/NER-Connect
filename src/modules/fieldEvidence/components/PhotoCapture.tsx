@@ -91,35 +91,16 @@ export const PhotoCapture: React.FC<PhotoCaptureProps> = ({ onCapture, onClear, 
   }, [existingPreview]);
 
   return (
-    <div className="p-4 border border-zinc-200 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900 shadow-sm space-y-3">
-      <div className="flex items-center justify-between">
-        <label className="block text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-          Photo Evidence
-        </label>
-        {file && (
-          <span className="text-xs text-zinc-500 font-mono">
-            {file.name} ({(file.size / 1024).toFixed(1)} KB)
-          </span>
-        )}
-      </div>
-
+    <div className="space-y-2">
       {preview ? (
-        <div className="relative rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-700 bg-zinc-950 flex flex-col items-center">
-          <img
-            src={preview}
-            alt="Evidence preview"
-            className="w-full max-h-72 object-contain bg-zinc-900"
-          />
-          <div className="w-full p-2 bg-zinc-900/90 border-t border-zinc-800 flex justify-between items-center px-4">
-            <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
-              ✓ Photo ready
+        <div className="border border-line rounded overflow-hidden">
+          <img src={preview} alt="Photo for this report" className="w-full max-h-64 object-contain bg-canvas" />
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-line text-[0.85rem]">
+            <span className="text-muted truncate">
+              {file ? `${file.name} (${(file.size / 1024).toFixed(0)} KB)` : 'Photo ready'}
             </span>
-            <button
-              type="button"
-              onClick={handleRemove}
-              className="px-3 py-1 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded text-xs font-semibold transition"
-            >
-              Remove / Retake
+            <button type="button" onClick={handleRemove} className="underline shrink-0">
+              Remove
             </button>
           </div>
         </div>
@@ -128,36 +109,18 @@ export const PhotoCapture: React.FC<PhotoCaptureProps> = ({ onCapture, onClear, 
           onDrop={handleDrop}
           onDragOver={handleDragOver}
           onClick={() => fileInputRef.current?.click()}
-          className="border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-blue-500 dark:hover:border-blue-400 rounded-xl p-6 text-center cursor-pointer transition bg-zinc-50 dark:bg-zinc-800/40 hover:bg-blue-50/50 dark:hover:bg-blue-950/20"
+          className="border border-dashed border-line rounded px-4 py-5 text-center cursor-pointer hover:bg-canvas"
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleChange}
-            className="hidden"
-          />
-          <div className="flex flex-col items-center space-y-2">
-            <span className="text-3xl">📁</span>
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              <span className="text-blue-600 dark:text-blue-400 underline">Browse file</span> or drag & drop photo here
-            </div>
-            <p className="text-xs text-zinc-500">Supports JPEG, PNG, WebP</p>
-          </div>
+          <input ref={fileInputRef} type="file" accept="image/*" onChange={handleChange} className="hidden" />
+          <p>
+            Or <span className="underline">upload a photo</span> (drag it here)
+          </p>
+          <p className="text-[0.85rem] text-muted">JPEG, PNG or WebP</p>
         </div>
       )}
 
-      {isProcessing && (
-        <div className="text-xs text-blue-600 dark:text-blue-400 animate-pulse font-medium">
-          Processing image...
-        </div>
-      )}
-
-      {error && (
-        <div className="p-2.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg text-xs text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      )}
+      {isProcessing && <p className="text-[0.85rem] text-muted">Preparing photo…</p>}
+      {error && <p className="notice notice-error text-[0.9rem]">{error}</p>}
     </div>
   );
 };

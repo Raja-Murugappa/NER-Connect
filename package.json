@@ -21,8 +21,7 @@
     "react-router-dom": "^7.18.4",
     "sql.js": "^1.14.2",
     "tailwindcss": "^4.3.3",
-    "uuid": "^14.0.2",
-    "ws": "^8.21.3"
+    "uuid": "^14.0.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -32,7 +31,6 @@
     "@types/react-dom": "^19.2.7",
     "@types/sql.js": "^1.4.11",
     "@types/uuid": "^10.0.0",
-    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
