@@ -1,5 +1,7 @@
 // src/pages/corridor/PlanForm.tsx
 import React from 'react';
+import type { DeliveryProduct } from '../../modules/deliveries/types/delivery';
+import { DELIVERY_PRODUCT_LABEL, DELIVERY_PRODUCT_OPTIONS } from '../../modules/deliveries/types/delivery';
 
 export interface PresetOption {
   key: string;
@@ -14,6 +16,8 @@ interface PlanFormProps {
   presets: PresetOption[];
   presetKey: string;
   onPresetChange: (key: string) => void;
+  product: DeliveryProduct;
+  onProductChange: (value: DeliveryProduct) => void;
   scenario: '1' | '2';
   onScenarioChange: (value: '1' | '2') => void;
   onSubmit: () => void;
@@ -29,6 +33,8 @@ export const PlanForm: React.FC<PlanFormProps> = ({
   presets,
   presetKey,
   onPresetChange,
+  product,
+  onProductChange,
   scenario,
   onScenarioChange,
   onSubmit,
@@ -65,6 +71,22 @@ export const PlanForm: React.FC<PlanFormProps> = ({
         placeholder="Town or city, e.g. Imphal"
         autoComplete="off"
       />
+    </div>
+
+    <div>
+      <label className="label" htmlFor="plan-product">Delivery product</label>
+      <select
+        id="plan-product"
+        className="input"
+        value={product}
+        onChange={(e) => onProductChange(e.target.value as DeliveryProduct)}
+      >
+        {DELIVERY_PRODUCT_OPTIONS.map((p) => (
+          <option key={p} value={p}>
+            {DELIVERY_PRODUCT_LABEL[p]}
+          </option>
+        ))}
+      </select>
     </div>
 
     <div>

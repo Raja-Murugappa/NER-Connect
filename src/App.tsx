@@ -7,6 +7,8 @@ import { Navbar } from './components/Navbar';
 const CorridorPage = lazy(() => import('./pages/CorridorPage').then((m) => ({ default: m.CorridorPage })));
 const FieldEvidencePage = lazy(() => import('./modules/fieldEvidence/FieldEvidencePage'));
 const SMSPage = lazy(() => import('./modules/sms/SMSPage'));
+const ConnectivityPage = lazy(() => import('./pages/ConnectivityPage'));
+const DeliveriesPage = lazy(() => import('./modules/deliveries/DeliveriesPage'));
 
 function App() {
   return (
@@ -18,6 +20,8 @@ function App() {
             <Route path="/" element={<CorridorPage />} />
             <Route path="/field-evidence" element={<FieldEvidencePage />} />
             <Route path="/sms" element={<SMSPage />} />
+            <Route path="/connectivity" element={<ConnectivityPage />} />
+            <Route path="/deliveries" element={<DeliveriesPage />} />
           </Routes>
         </Suspense>
       </main>

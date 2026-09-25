@@ -5,6 +5,8 @@ const LINKS = [
   { to: '/', label: 'Routes', end: true },
   { to: '/field-evidence', label: 'Field reports', end: false },
   { to: '/sms', label: 'SMS alerts', end: false },
+  { to: '/connectivity', label: 'Connectivity', end: false },
+  { to: '/deliveries', label: 'Deliveries', end: false },
 ];
 
 export const Navbar: React.FC = () => (

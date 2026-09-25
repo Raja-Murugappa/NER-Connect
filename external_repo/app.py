@@ -11,7 +11,7 @@ from ner_connect.routing.route_engine import (
 )
 from ner_connect.routing.route_options import score_route, get_alternative_options
 from ner_connect.routing.reroute_engine import evaluate_disruption
-from ner_connect.intelligence.district_status import list_districts, route_status_to_hub
+from ner_connect.intelligence.district_status import list_districts
 
 app = Flask(__name__, static_folder="web", static_url_path="")
 
@@ -141,23 +141,6 @@ def districts_route():
     No routing calls - instant."""
     try:
         return jsonify({"status": "SUCCESS", "districts": list_districts()})
-    except Exception as e:
-        return jsonify({"status": "ERROR", "message": str(e)}), 500
-
-@app.route("/api/district-route-status", methods=["GET"])
-def district_route_status_route():
-    """
-    How many genuinely different real roads reach one district from the regional hub
-    (Guwahati) - real OSRM work, so this is checked per district on request rather than for
-    all districts up front. Query params: lat, lon (the district's centroid).
-    """
-    try:
-        lat = float(request.args.get("lat"))
-        lon = float(request.args.get("lon"))
-    except (TypeError, ValueError):
-        return jsonify({"status": "ERROR", "message": "lat and lon query parameters are required"}), 400
-    try:
-        return jsonify(route_status_to_hub(lat, lon))
     except Exception as e:
         return jsonify({"status": "ERROR", "message": str(e)}), 500
 

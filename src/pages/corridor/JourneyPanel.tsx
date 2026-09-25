@@ -23,6 +23,7 @@ interface JourneyPanelProps {
   journeyActive: boolean;
   onStart: () => void;
   onStop: () => void;
+  onFinish: () => void;
   playing: boolean;
   onPlay: () => void;
   onPause: () => void;
@@ -44,6 +45,7 @@ export const JourneyPanel: React.FC<JourneyPanelProps> = ({
   journeyActive,
   onStart,
   onStop,
+  onFinish,
   playing,
   onPlay,
   onPause,
@@ -92,10 +94,16 @@ export const JourneyPanel: React.FC<JourneyPanelProps> = ({
           >
             {arrived ? 'Arrived' : playing ? 'Pause' : 'Play'}
           </button>
+          <button type="button" onClick={onFinish} disabled={evaluating || arrived} className="btn btn-primary">
+            End
+          </button>
           <button type="button" onClick={onStop} className="btn">
             End journey
           </button>
         </div>
+        <p className="text-[0.85rem] text-muted">
+          "End" finishes the trip now and marks the delivery delivered. "End journey" stops without finishing.
+        </p>
         <input
           type="range"
           min={0}

@@ -25,6 +25,8 @@ import { buildDisruptionAlert } from './corridor/smsAlert';
 import { JourneyTimeline } from './corridor/JourneyTimeline';
 import type { JourneyEvent } from './corridor/JourneyTimeline';
 import { smsStore } from '../modules/sms/services/smsStore';
+import { deliveryStore } from '../modules/deliveries/services/deliveryStore';
+import type { DeliveryProduct, DeliveryStatus } from '../modules/deliveries/types/delivery';
 
 interface Preset {
   label: string;
@@ -101,6 +103,7 @@ export const CorridorPage: React.FC = () => {
   // ─── Planning ───────────────────────────────────────────────────────────────
   const [presetKey, setPresetKey] = useState<string>(DEFAULT_KEY);
   const [scenario, setScenario] = useState<'1' | '2'>('1');
+  const [product, setProduct] = useState<DeliveryProduct>('none');
   const [corridorName, setCorridorName] = useState<string>(DEFAULT_PRESET.label);
   const [originQuery, setOriginQuery] = useState<string>(DEFAULT_PRESET.origin.name);
   const [destQuery, setDestQuery] = useState<string>(DEFAULT_PRESET.destination.name);
@@ -118,7 +121,14 @@ export const CorridorPage: React.FC = () => {
   const requestId = useRef(0);
 
   const runEvaluation = useCallback(
-    async (roadName: string, from: string | Location, to: string | Location, scenarioValue: '1' | '2') => {
+    async (
+      roadName: string,
+      from: string | Location,
+      to: string | Location,
+      scenarioValue: '1' | '2',
+      productValue: DeliveryProduct,
+      createDelivery: boolean
+    ) => {
       const id = ++requestId.current;
       setIsEvaluating(true);
       setError(null);
@@ -134,6 +144,16 @@ export const CorridorPage: React.FC = () => {
         setSelectedId('A');
         setFocusPoints(null);
         setIsEvaluating(false);
+        // A real route was found for this search: the delivery exists from here, before the
+        // journey simulation even starts (see the "search route" flows below).
+        if (createDelivery && data.routing_status === 'SUCCESS') {
+          activeDeliveryId.current = deliveryStore.plan({
+            corridorName: roadName,
+            routeId: 'A',
+            distanceKm: data.total_distance_km,
+            product: productValue,
+          }).id;
+        }
         if (data.routing_status !== 'SUCCESS') return;
 
         // Other roads between the same places can take longer; show the main route first.
@@ -167,7 +187,7 @@ export const CorridorPage: React.FC = () => {
   );
 
   useEffect(() => {
-    runEvaluation(DEFAULT_PRESET.label, DEFAULT_PRESET.origin, DEFAULT_PRESET.destination, '1');
+    runEvaluation(DEFAULT_PRESET.label, DEFAULT_PRESET.origin, DEFAULT_PRESET.destination, '1', 'none', false);
   }, [runEvaluation]);
 
   // Send known coordinates when the text is unchanged, otherwise let the backend look up the name.
@@ -201,6 +221,15 @@ export const CorridorPage: React.FC = () => {
   const [selectedAltId, setSelectedAltId] = useState<string | null>(null);
   const [events, setEvents] = useState<JourneyEvent[]>([]);
   const rerouteRequestId = useRef(0);
+  // The delivery record (deliveryStore) for the current search/journey, null once it's
+  // finalised (delivered or ended early) or nothing has been searched yet.
+  const activeDeliveryId = useRef<string | null>(null);
+  const [tripCompleted, setTripCompleted] = useState<boolean>(false);
+
+  const updateDelivery = useCallback((status: DeliveryStatus, note: string) => {
+    if (!activeDeliveryId.current) return;
+    deliveryStore.updateStatus(activeDeliveryId.current, status, note);
+  }, []);
 
   const routeKm = useMemo(() => cumulativeKm(journey?.route.polyline ?? []), [journey]);
   const truckKm = routeKm[playback.index] ?? 0;
@@ -225,17 +254,28 @@ export const CorridorPage: React.FC = () => {
   };
 
   const stopJourney = () => {
+    // Only cancel the delivery if a journey was actually running: a route that was merely
+    // searched/planned (never started) is left as "planned" rather than cancelled, so
+    // changing the scenario or re-searching before pressing Start doesn't silently cancel
+    // it. One that already arrived was finalised by the arrival effect below, which clears
+    // activeDeliveryId, so this is a no-op for those.
+    if (activeDeliveryId.current && journey) {
+      updateDelivery('cancelled', 'Ended by the operator before reaching the destination.');
+      activeDeliveryId.current = null;
+    }
     playback.pause();
     playback.setIndex(0);
     clearDisruptionState();
     setJourney(null);
     setEvents([]);
+    setTripCompleted(false);
   };
 
   const startJourney = () => {
     if (!selectedOption) return;
     clearDisruptionState();
     setFocusPoints(null);
+    setTripCompleted(false);
     setJourney({
       routeId: selectedOption.id,
       route: {
@@ -254,8 +294,37 @@ export const CorridorPage: React.FC = () => {
         text: `Journey started on route ${selectedOption.id}: ${corridorName}, ${selectedOption.distance_km.toFixed(0)} km.`,
       },
     ]);
+    // Normally already created when the route was searched; this is only a fallback (e.g.
+    // starting the default route on page load without an explicit search).
+    if (!activeDeliveryId.current) {
+      activeDeliveryId.current = deliveryStore.plan({
+        corridorName,
+        routeId: selectedOption.id,
+        distanceKm: selectedOption.distance_km,
+        product,
+      }).id;
+    }
+    updateDelivery('in_transit', 'Journey started.');
     playback.play();
   };
+
+  // "End": finishes the trip quickly (still an animated playthrough) instead of waiting for
+  // a full playback or manually dragging the slider to the end.
+  const finishJourney = () => {
+    logEvent('Operator ended the trip now.');
+    playback.finishNow();
+  };
+
+  // Finalises the delivery record the moment the simulated truck reaches the destination,
+  // whether that's a normal playthrough or the fast "End" button.
+  useEffect(() => {
+    if (playback.atDestination && activeDeliveryId.current) {
+      updateDelivery('delivered', 'Reached the destination.');
+      activeDeliveryId.current = null;
+      setTripCompleted(true);
+      logEvent('Trip completed. Delivery marked as delivered.');
+    }
+  }, [playback.atDestination, updateDelivery]);
 
   const placeDisruption = async (lat: number, lon: number) => {
     if (!journey) return;
@@ -298,6 +367,7 @@ export const CorridorPage: React.FC = () => {
       // Only a blocking disruption needs an operator decision; otherwise keep driving.
       const needsDecision = ['REROUTE_AVAILABLE', 'NO_ALTERNATIVE', 'ROUTING_UNAVAILABLE'].includes(res.status);
       if (needsDecision) {
+        updateDelivery(res.status === 'REROUTE_AVAILABLE' ? 'delayed' : 'blocked', res.message);
         autoNotifyVerifiedDrivers(res, recommendedAlt); // runs in the background, doesn't block the UI
       } else if (wasPlaying) {
         playback.play();
@@ -327,6 +397,7 @@ export const CorridorPage: React.FC = () => {
     logEvent(
       `Operator took ${detourLabel(alt.id).toLowerCase()}: ${alt.distance_km.toFixed(0)} km to go (${alt.extra_km >= 0 ? '+' : ''}${alt.extra_km.toFixed(0)} km, ${alt.extra_mins >= 0 ? '+' : ''}${alt.extra_mins} min).`
     );
+    updateDelivery('rerouted', `Took ${detourLabel(alt.id).toLowerCase()}: ${alt.distance_km.toFixed(0)} km to go.`);
     playback.play();
   };
 
@@ -334,6 +405,7 @@ export const CorridorPage: React.FC = () => {
     if (!reroute) return;
     if (reroute.status === 'REROUTE_AVAILABLE') {
       logEvent('Operator kept the current route despite the blockage.');
+      updateDelivery('in_transit', 'Operator kept the current route despite the blockage.');
       playback.play();
     } else if (reroute.hold_point) {
       logEvent(`Operator acknowledged: vehicle to hold at ${reroute.hold_point.name}.`);
@@ -408,7 +480,7 @@ export const CorridorPage: React.FC = () => {
     setCorridorName(preset.label);
     setOriginQuery(preset.origin.name);
     setDestQuery(preset.destination.name);
-    runEvaluation(preset.label, preset.origin, preset.destination, scenario);
+    runEvaluation(preset.label, preset.origin, preset.destination, scenario, product, true);
   };
 
   const handleSubmit = () => {
@@ -427,14 +499,14 @@ export const CorridorPage: React.FC = () => {
       setCorridorName(roadName);
     }
     const [f, t] = currentEndpoints();
-    runEvaluation(roadName, f, t, scenario);
+    runEvaluation(roadName, f, t, scenario, product, true);
   };
 
   const handleScenarioChange = (value: '1' | '2') => {
     stopJourney();
     setScenario(value);
     const [f, t] = currentEndpoints();
-    runEvaluation(corridorName, f, t, value);
+    runEvaluation(corridorName, f, t, value, product, false);
   };
 
   // ─── What the map and table show ────────────────────────────────────────────
@@ -476,6 +548,8 @@ export const CorridorPage: React.FC = () => {
             presets={PRESET_OPTIONS}
             presetKey={presetKey}
             onPresetChange={handlePresetChange}
+            product={product}
+            onProductChange={setProduct}
             scenario={scenario}
             onScenarioChange={handleScenarioChange}
             onSubmit={handleSubmit}
@@ -497,6 +571,7 @@ export const CorridorPage: React.FC = () => {
               journeyActive={!!journey}
               onStart={startJourney}
               onStop={stopJourney}
+              onFinish={finishJourney}
               playing={playback.playing}
               onPlay={playback.play}
               onPause={playback.pause}
@@ -516,6 +591,9 @@ export const CorridorPage: React.FC = () => {
 
         <section className="space-y-4 min-w-0 rise-in rise-in-2">
           {isFallback && result?.routing_warning && <p className="notice notice-warn">{result.routing_warning}</p>}
+          {tripCompleted && (
+            <p className="notice notice-ok">Trip completed — the delivery has been marked as delivered.</p>
+          )}
           {journey && (
             <RerouteCard
               evaluating={rerouteLoading}

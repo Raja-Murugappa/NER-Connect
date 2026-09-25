@@ -128,6 +128,7 @@ export default defineConfig(({ mode }) => {
         '/api/evaluate': apiTarget,
         '/api/route-options': apiTarget,
         '/api/reroute': apiTarget,
+        '/api/districts': apiTarget,
       },
     },
   };
