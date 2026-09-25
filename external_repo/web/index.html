@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NER-Connect | Logistics Accessibility & Disruption Intelligence Platform</title>
+  
+  <!-- Leaflet 2D Map CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  
+  <!-- Clean Light Mode Styles -->
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- Top Institutional Header -->
+  <header class="top-nav">
+    <div class="nav-brand">
+      <div class="brand-badge">NER</div>
+      <div class="brand-text">
+        <h1 class="brand-title">NER-Connect</h1>
+        <p class="brand-sub">Smart Logistics & Accessibility Intelligence Platform (North Eastern Region)</p>
+      </div>
+    </div>
+    <div class="nav-status">
+      <span class="status-indicator"></span>
+      <span class="status-text">OpenStreetMap (OSRM) Active</span>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-layout">
+    
+    <!-- Sidebar: Route & Scenario Configuration -->
+    <aside class="sidebar-panel">
+      
+      <div class="panel-card">
+        <h2 class="panel-heading">1. Corridor Configuration</h2>
+        
+        <div class="form-group">
+          <label for="preset-select">Popular Corridor Preset</label>
+          <select id="preset-select" class="form-control">
+            <option value="guwahati_gangtok" selected>Guwahati (Assam) ➔ Gangtok (Sikkim)</option>
+            <option value="guwahati_shillong">Guwahati (Assam) ➔ Shillong (Meghalaya)</option>
+            <option value="silchar_aizawl">Silchar (Assam) ➔ Aizawl (Mizoram)</option>
+            <option value="tezpur_tawang">Tezpur (Assam) ➔ Tawang (Arunachal)</option>
+            <option value="custom">-- Custom GPS Coordinates --</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="road-name-input">Corridor Name</label>
+          <input type="text" id="road-name-input" class="form-control" value="Guwahati-Gangtok Strategic Corridor">
+        </div>
+
+        <div class="coord-grid">
+          <div class="form-group">
+            <label for="start-lat">Start Latitude</label>
+            <input type="number" step="0.0001" id="start-lat" class="form-control" value="26.1445">
+          </div>
+          <div class="form-group">
+            <label for="start-lon">Start Longitude</label>
+            <input type="number" step="0.0001" id="start-lon" class="form-control" value="91.7362">
+          </div>
+          <div class="form-group">
+            <label for="end-lat">End Latitude</label>
+            <input type="number" step="0.0001" id="end-lat" class="form-control" value="27.3389">
+          </div>
+          <div class="form-group">
+            <label for="end-lon">End Longitude</label>
+            <input type="number" step="0.0001" id="end-lon" class="form-control" value="88.6065">
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-card">
+        <h2 class="panel-heading">2. External Hazard Feed Scenario</h2>
+        <div class="radio-group">
+          <label class="radio-label">
+            <input type="radio" name="scenario" value="1" checked>
+            <span class="radio-custom"></span>
+            <span class="radio-text">
+              <strong>Normal Daily Operations</strong>
+              <small>Standard baseline alert feeds (0.15 - 0.25)</small>
+            </span>
+          </label>
+          
+          <label class="radio-label">
+            <input type="radio" name="scenario" value="2">
+            <span class="radio-custom"></span>
+            <span class="radio-text">
+              <strong>Ingest Severe Hazard Warning</strong>
+              <small>Simulates active ISRO/CWC warning (0.88) on mountain sectors</small>
+            </span>
+          </label>
+        </div>
+
+        <button id="evaluate-btn" class="btn-primary">
+          Calculate Route &amp; Evaluate Sectors
+        </button>
+      </div>
+
+      <!-- Quick Summary Box -->
+      <div id="summary-card" class="panel-card summary-card hidden">
+        <h2 class="panel-heading">Journey Summary</h2>
+        <div class="summary-metric">
+          <span class="metric-label">TOTAL DISTANCE</span>
+          <span id="metric-dist" class="metric-value">-- km</span>
+        </div>
+        <div class="summary-metric highlight-eta">
+          <span class="metric-label">TOTAL JOURNEY ETA</span>
+          <span id="metric-eta" class="metric-value">--</span>
+        </div>
+        <div class="summary-details">
+          <p><strong>Strategic Sectors:</strong> <span id="metric-sectors">--</span></p>
+          <p><strong>Routing Engine:</strong> <span id="metric-source">OSRM Verified Real Route</span></p>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- Main Content Area: Map and Sector Cards -->
+    <section class="content-panel">
+      
+      <!-- Top Overview Bar -->
+      <div class="overview-bar">
+        <div class="overview-left">
+          <span class="corridor-badge" id="corridor-title-badge">Guwahati ➔ Gangtok Corridor</span>
+          <span class="sub-badge" id="corridor-distance-badge">519.1 km Verified Road Route</span>
+        </div>
+        <div class="overview-right">
+          <div class="eta-pill" id="header-eta-pill">
+            <span class="eta-icon">⏱️</span>
+            <span class="eta-text">Total Journey ETA: <strong id="header-eta-text">Calculating...</strong></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2D Leaflet Map Container -->
+      <div class="map-wrapper">
+        <div id="map" class="map-container"></div>
+        <div class="map-legend">
+          <div class="legend-item"><span class="legend-color safe"></span> Low / Safe Sector</div>
+          <div class="legend-item"><span class="legend-color caution"></span> Moderate Advisory</div>
+          <div class="legend-item"><span class="legend-color danger"></span> Critical Hazard Sector</div>
+          <div class="legend-item"><span class="legend-icon">🛡️</span> Checkpoint</div>
+          <div class="legend-item"><span class="legend-icon">🔀</span> Reroute Junction</div>
+          <div class="legend-item"><span class="legend-icon">🌉</span> Bridge</div>
+        </div>
+      </div>
+
+      <!-- Sectors Header -->
+      <div class="sectors-header-row">
+        <h2 class="sectors-title">Strategic Operational Sectors (Sectors &ge; 50 km)</h2>
+        <p class="sectors-subtitle">Each sector combines physical elevation, upstream ISRO/CWC hazard feeds, and local ground context.</p>
+      </div>
+
+      <!-- Sector Cards List -->
+      <div id="sectors-list" class="sectors-list">
+        <div class="loading-placeholder">Click "Calculate Route &amp; Evaluate Sectors" to view sector intelligence.</div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Leaflet.js -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Client Application Logic -->
+  <script src="app.js"></script>
+
+</body>
+</html>

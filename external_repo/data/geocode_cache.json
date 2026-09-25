@@ -1,0 +1,26 @@
+{
+  "dimapur": {
+    "name": "Dimapur",
+    "display_name": "Dimapur, Nagaland, India",
+    "lat": 25.9041,
+    "lon": 93.7178
+  },
+  "imphal": {
+    "name": "Imphal",
+    "display_name": "Imphal, Lamphelpat, Imphal West, Manipur, 795001, India",
+    "lat": 24.7991,
+    "lon": 93.9364
+  },
+  "coimbatore": {
+    "name": "coimbatore",
+    "display_name": "Coimbatore, Coimbatore North, Coimbatore, Tamil Nadu, 641001, India",
+    "lat": 11.0018,
+    "lon": 76.9628
+  },
+  "assam": {
+    "name": "assam",
+    "display_name": "Assam, India",
+    "lat": 26.4074,
+    "lon": 93.2551
+  }
+}
